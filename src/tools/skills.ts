@@ -250,19 +250,22 @@ Examples:
       inputSchema: InstallAndReadSchema,
       annotations: {
         readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: true,
+        destructiveHint: true,
+        idempotentHint: false,
         openWorldHint: true,
       },
     },
     async (params: InstallAndReadInput) => {
       try {
         const readArgs = ["-y", "openskills", "read", params.skillName];
+        if (params.global) readArgs.push("--global");
+        if (params.universal) readArgs.push("--universal");
 
         // Step 1: Check if skill already exists locally
         try {
           const { stdout } = await execFileAsync("npx", readArgs, {
             timeout: TIMEOUTS.READ,
+            shell: true,
           });
           if (
             stdout &&
@@ -289,8 +292,14 @@ Examples:
           // Skill not found locally, proceed with installation
         }
 
-        // Step 2: Install if not exists
-        const installArgs = ["-y", "openskills", "install", params.repo];
+        // Step 2: Install if not exists (use --yes to skip interactive selection)
+        const installArgs = [
+          "-y",
+          "openskills",
+          "install",
+          "--yes",
+          params.repo,
+        ];
         if (params.global) installArgs.push("--global");
         if (params.universal) installArgs.push("--universal");
 
@@ -298,6 +307,7 @@ Examples:
         try {
           const { stdout, stderr } = await execFileAsync("npx", installArgs, {
             timeout: TIMEOUTS.INSTALL,
+            shell: true,
           });
           installOutput = stdout || stderr;
         } catch (installError) {
@@ -316,6 +326,7 @@ Examples:
         let readOutput: string;
         try {
           const { stdout, stderr } = await execFileAsync("npx", readArgs, {
+            shell: true,
             timeout: TIMEOUTS.READ,
           });
           readOutput = stdout || stderr;

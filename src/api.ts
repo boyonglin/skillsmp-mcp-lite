@@ -107,9 +107,10 @@ export async function makeApiRequest<T>(
 
   if (!response.ok) {
     const errorData = (await response.json().catch(() => ({}))) as ApiError;
-    throw new Error(
+    throw new ApiRequestError(
       errorData.error?.message ||
-        `API request failed with status ${response.status}`
+        `API request failed with status ${response.status}`,
+      response.status
     );
   }
 
@@ -187,12 +188,35 @@ export class ApiStructureError extends Error {
   }
 }
 
+/**
+ * Custom error for API requests with HTTP status code
+ */
+export class ApiRequestError extends Error {
+  public readonly statusCode: number;
+
+  constructor(message: string, statusCode: number) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.statusCode = statusCode;
+  }
+}
+
 // Error Handler
 export function handleApiError(error: unknown): string {
   if (error instanceof ApiStructureError) {
     return `⚠️ API Structure Error: ${error.message}\n\nThis likely means the SkillsMP API has changed. Please report this issue.`;
   }
+  if (error instanceof ApiRequestError) {
+    if (error.statusCode === 401) {
+      return "Error: Invalid or missing API key. Please check your SKILLSMP_API_KEY environment variable.";
+    }
+    if (error.statusCode === 429) {
+      return "Error: Rate limit exceeded. Please wait before making more requests.";
+    }
+    return `Error: ${error.message} (HTTP ${error.statusCode})`;
+  }
   if (error instanceof Error) {
+    // Fallback for other errors
     if (error.message.includes("401")) {
       return "Error: Invalid or missing API key. Please check your SKILLSMP_API_KEY environment variable.";
     }
