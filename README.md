@@ -79,7 +79,7 @@ claude mcp add skillsmp -- npx -y skillsmp-mcp-lite --env SKILLSMP_API_KEY=YOUR_
 
 Get your API key from: https://skillsmp.com/docs/api
 
-> **Note**: The API key is optional. Without it, you may encounter rate limits.
+> **Note**: The API key is required. The server will exit if `SKILLSMP_API_KEY` is not set.
 
 ## Available Tools
 
