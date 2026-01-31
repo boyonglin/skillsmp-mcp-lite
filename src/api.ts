@@ -96,20 +96,20 @@ export async function makeApiRequest<T>(
     response = await fetch(url.toString(), {
       method: "GET",
       headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
       },
-      signal: controller.signal
+      signal: controller.signal,
     });
   } finally {
     clearTimeout(timeoutId);
   }
 
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({})) as ApiError;
+    const errorData = (await response.json().catch(() => ({}))) as ApiError;
     throw new Error(
       errorData.error?.message ||
-      `API request failed with status ${response.status}`
+        `API request failed with status ${response.status}`
     );
   }
 
@@ -120,21 +120,23 @@ export async function makeApiRequest<T>(
  * Validate base response structure (shared logic)
  */
 function validateBaseResponse(data: unknown): Record<string, unknown> {
-  if (!data || typeof data !== 'object') {
-    throw new ApiStructureError('Invalid response: expected object');
+  if (!data || typeof data !== "object") {
+    throw new ApiStructureError("Invalid response: expected object");
   }
 
   const response = data as Record<string, unknown>;
 
-  if (typeof response.success !== 'boolean') {
+  if (typeof response.success !== "boolean") {
     throw new ApiStructureError('Invalid response: missing "success" field');
   }
 
   if (!response.success) {
-    throw new ApiStructureError(`API returned failure: ${JSON.stringify(response)}`);
+    throw new ApiStructureError(
+      `API returned failure: ${JSON.stringify(response)}`
+    );
   }
 
-  if (!response.data || typeof response.data !== 'object') {
+  if (!response.data || typeof response.data !== "object") {
     throw new ApiStructureError('Invalid response: missing "data" object');
   }
 
@@ -144,14 +146,16 @@ function validateBaseResponse(data: unknown): Record<string, unknown> {
 /**
  * Validate search response structure
  */
-export function validateSearchResponse(data: unknown): asserts data is SearchResponse {
+export function validateSearchResponse(
+  data: unknown
+): asserts data is SearchResponse {
   const responseData = validateBaseResponse(data);
 
   if (!Array.isArray(responseData.skills)) {
     throw new ApiStructureError(
       'Invalid response structure: expected "data.skills" array. ' +
-      `Got: ${JSON.stringify(Object.keys(responseData))}. ` +
-      'The SkillsMP API structure may have changed.'
+        `Got: ${JSON.stringify(Object.keys(responseData))}. ` +
+        "The SkillsMP API structure may have changed."
     );
   }
 }
@@ -159,14 +163,16 @@ export function validateSearchResponse(data: unknown): asserts data is SearchRes
 /**
  * Validate AI search response structure
  */
-export function validateAISearchResponse(data: unknown): asserts data is AISearchResponse {
+export function validateAISearchResponse(
+  data: unknown
+): asserts data is AISearchResponse {
   const responseData = validateBaseResponse(data);
 
   if (!Array.isArray(responseData.data)) {
     throw new ApiStructureError(
       'Invalid AI search response structure: expected "data.data" array. ' +
-      `Got: ${JSON.stringify(Object.keys(responseData))}. ` +
-      'The SkillsMP API structure may have changed.'
+        `Got: ${JSON.stringify(Object.keys(responseData))}. ` +
+        "The SkillsMP API structure may have changed."
     );
   }
 }
@@ -177,7 +183,7 @@ export function validateAISearchResponse(data: unknown): asserts data is AISearc
 export class ApiStructureError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = 'ApiStructureError';
+    this.name = "ApiStructureError";
   }
 }
 

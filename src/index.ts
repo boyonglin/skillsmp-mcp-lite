@@ -28,7 +28,7 @@ if (!API_KEY) {
 // Initialize MCP Server
 const server = new McpServer({
   name: "skillsmp-mcp-server",
-  version: version as string
+  version: version as string,
 });
 
 // Register skills search tools

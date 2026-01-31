@@ -7,17 +7,23 @@ import {
   validateSearchResponse,
   validateAISearchResponse,
   type SearchResponse,
-  type AISearchResponse,
-  type Skill
+  type Skill,
 } from "../api.js";
-import { KeywordSearchSchema, AISearchSchema, InstallAndReadSchema, type KeywordSearchInput, type AISearchInput, type InstallAndReadInput } from "../schemas.js";
+import {
+  KeywordSearchSchema,
+  AISearchSchema,
+  InstallAndReadSchema,
+  type KeywordSearchInput,
+  type AISearchInput,
+  type InstallAndReadInput,
+} from "../schemas.js";
 
 const execFileAsync = promisify(execFile);
 
 // Timeout constants (in milliseconds)
 const TIMEOUTS = {
   READ: 30_000,
-  INSTALL: 120_000
+  INSTALL: 120_000,
 } as const;
 
 /**
@@ -28,14 +34,14 @@ function getErrorDetails(error: unknown): { message: string; stderr?: string } {
     const execError = error as Error & { stderr?: string; stdout?: string };
     return {
       message: execError.message,
-      stderr: execError.stderr
+      stderr: execError.stderr,
     };
   }
-  if (typeof error === 'object' && error !== null) {
+  if (typeof error === "object" && error !== null) {
     const e = error as Record<string, unknown>;
     return {
-      message: String(e.message || 'Unknown error'),
-      stderr: typeof e.stderr === 'string' ? e.stderr : undefined
+      message: String(e.message || "Unknown error"),
+      stderr: typeof e.stderr === "string" ? e.stderr : undefined,
     };
   }
   return { message: String(error) };
@@ -45,7 +51,6 @@ function getErrorDetails(error: unknown): { message: string; stderr?: string } {
  * Register SkillsMP tools on the MCP server
  */
 export function registerSkillsTools(server: McpServer, apiKey: string) {
-
   // Tool 1: Keyword Search
   server.registerTool(
     "skillsmp_search_skills",
@@ -75,13 +80,13 @@ Examples:
         readOnlyHint: true,
         destructiveHint: false,
         idempotentHint: true,
-        openWorldHint: true
-      }
+        openWorldHint: true,
+      },
     },
     async (params: KeywordSearchInput) => {
       try {
         const queryParams: Record<string, string | number> = {
-          q: params.query
+          q: params.query,
         };
 
         if (params.page) queryParams.page = params.page;
@@ -102,10 +107,12 @@ Examples:
 
         if (!skills.length) {
           return {
-            content: [{
-              type: "text" as const,
-              text: `No skills found matching '${params.query}'. Try different keywords or use AI semantic search for natural language queries.`
-            }]
+            content: [
+              {
+                type: "text" as const,
+                text: `No skills found matching '${params.query}'. Try different keywords or use AI semantic search for natural language queries.`,
+              },
+            ],
           };
         }
 
@@ -117,15 +124,17 @@ Examples:
             query: params.query,
             count: skills.length,
             skills: skills,
-            pagination: pagination
-          }
+            pagination: pagination,
+          },
         };
       } catch (error) {
         return {
-          content: [{
-            type: "text" as const,
-            text: handleApiError(error)
-          }]
+          content: [
+            {
+              type: "text" as const,
+              text: handleApiError(error),
+            },
+          ],
         };
       }
     }
@@ -158,8 +167,8 @@ Examples:
         readOnlyHint: true,
         destructiveHint: false,
         idempotentHint: true,
-        openWorldHint: true
-      }
+        openWorldHint: true,
+      },
     },
     async (params: AISearchInput) => {
       try {
@@ -175,18 +184,20 @@ Examples:
         // AI search returns results in data.data array with skill objects
         const results = rawData.data?.data || [];
         const skills = results
-          .filter(item => item.skill) // Only include items with skill data
-          .map(item => ({
+          .filter((item) => item.skill) // Only include items with skill data
+          .map((item) => ({
             ...item.skill!,
-            score: item.score
+            score: item.score,
           }));
 
         if (!skills.length) {
           return {
-            content: [{
-              type: "text" as const,
-              text: `No skills found for: "${params.query}". Try rephrasing your query or use keyword search for specific terms.`
-            }]
+            content: [
+              {
+                type: "text" as const,
+                text: `No skills found for: "${params.query}". Try rephrasing your query or use keyword search for specific terms.`,
+              },
+            ],
           };
         }
 
@@ -197,15 +208,17 @@ Examples:
           structuredContent: {
             query: params.query,
             count: skills.length,
-            skills: skills
-          }
+            skills: skills,
+          },
         };
       } catch (error) {
         return {
-          content: [{
-            type: "text" as const,
-            text: handleApiError(error)
-          }]
+          content: [
+            {
+              type: "text" as const,
+              text: handleApiError(error),
+            },
+          ],
         };
       }
     }
@@ -239,8 +252,8 @@ Examples:
         readOnlyHint: false,
         destructiveHint: false,
         idempotentHint: true,
-        openWorldHint: true
-      }
+        openWorldHint: true,
+      },
     },
     async (params: InstallAndReadInput) => {
       try {
@@ -248,17 +261,28 @@ Examples:
 
         // Step 1: Check if skill already exists locally
         try {
-          const { stdout } = await execFileAsync("npx", readArgs, { timeout: TIMEOUTS.READ });
-          if (stdout && !stdout.includes("not found") && !stdout.includes("Error")) {
-            const output = formatInstallAndReadResponse(params.repo, params.skillName, stdout, true);
+          const { stdout } = await execFileAsync("npx", readArgs, {
+            timeout: TIMEOUTS.READ,
+          });
+          if (
+            stdout &&
+            !stdout.includes("not found") &&
+            !stdout.includes("Error")
+          ) {
+            const output = formatInstallAndReadResponse(
+              params.repo,
+              params.skillName,
+              stdout,
+              true
+            );
             return {
               content: [{ type: "text" as const, text: output }],
               structuredContent: {
                 repo: params.repo,
                 skillName: params.skillName,
                 skillContent: stdout,
-                wasAlreadyInstalled: true
-              }
+                wasAlreadyInstalled: true,
+              },
             };
           }
         } catch {
@@ -272,34 +296,47 @@ Examples:
 
         let installOutput: string;
         try {
-          const { stdout, stderr } = await execFileAsync("npx", installArgs, { timeout: TIMEOUTS.INSTALL });
+          const { stdout, stderr } = await execFileAsync("npx", installArgs, {
+            timeout: TIMEOUTS.INSTALL,
+          });
           installOutput = stdout || stderr;
         } catch (installError) {
           const errorDetails = getErrorDetails(installError);
           return {
-            content: [{
-              type: "text" as const,
-              text: `❌ **Installation Failed**\n\nRepository: ${params.repo}\n\nError:\n${errorDetails.stderr || errorDetails.message}`
-            }]
+            content: [
+              {
+                type: "text" as const,
+                text: `❌ **Installation Failed**\n\nRepository: ${params.repo}\n\nError:\n${errorDetails.stderr || errorDetails.message}`,
+              },
+            ],
           };
         }
 
         // Step 3: Read the skill after installation
         let readOutput: string;
         try {
-          const { stdout, stderr } = await execFileAsync("npx", readArgs, { timeout: TIMEOUTS.READ });
+          const { stdout, stderr } = await execFileAsync("npx", readArgs, {
+            timeout: TIMEOUTS.READ,
+          });
           readOutput = stdout || stderr;
         } catch (readError) {
           const errorDetails = getErrorDetails(readError);
           return {
-            content: [{
-              type: "text" as const,
-              text: `✅ **Installation Succeeded** but **Read Failed**\n\nRepository: ${params.repo}\nSkill: ${params.skillName}\n\n**Install Output:**\n${installOutput}\n\n**Read Error:**\n${errorDetails.stderr || errorDetails.message}\n\n💡 **Tip**: Check if the skill name is correct. Use \`npx openskills list\` to see installed skills.`
-            }]
+            content: [
+              {
+                type: "text" as const,
+                text: `✅ **Installation Succeeded** but **Read Failed**\n\nRepository: ${params.repo}\nSkill: ${params.skillName}\n\n**Install Output:**\n${installOutput}\n\n**Read Error:**\n${errorDetails.stderr || errorDetails.message}\n\n💡 **Tip**: Check if the skill name is correct. Use \`npx openskills list\` to see installed skills.`,
+              },
+            ],
           };
         }
 
-        const output = formatInstallAndReadResponse(params.repo, params.skillName, readOutput, false);
+        const output = formatInstallAndReadResponse(
+          params.repo,
+          params.skillName,
+          readOutput,
+          false
+        );
 
         return {
           content: [{ type: "text" as const, text: output }],
@@ -307,15 +344,17 @@ Examples:
             repo: params.repo,
             skillName: params.skillName,
             skillContent: readOutput,
-            wasAlreadyInstalled: false
-          }
+            wasAlreadyInstalled: false,
+          },
         };
       } catch (error) {
         return {
-          content: [{
-            type: "text" as const,
-            text: `❌ **Error**: ${error instanceof Error ? error.message : "An unexpected error occurred"}`
-          }]
+          content: [
+            {
+              type: "text" as const,
+              text: `❌ **Error**: ${error instanceof Error ? error.message : "An unexpected error occurred"}`,
+            },
+          ],
         };
       }
     }
@@ -331,13 +370,15 @@ function renderSkill(skill: SkillWithScore, index?: number): string[] {
   const lines: string[] = [];
 
   // Header
-  const header = index !== undefined ? `## ${index + 1}. ${skill.name}` : `## ${skill.name}`;
+  const header =
+    index !== undefined ? `## ${index + 1}. ${skill.name}` : `## ${skill.name}`;
   lines.push(header);
 
   // Meta info
   const meta: string[] = [];
   if (skill.stars !== undefined) meta.push(`⭐ ${skill.stars} stars`);
-  if (skill.score !== undefined) meta.push(`📊 Score: ${(skill.score * 100).toFixed(1)}%`);
+  if (skill.score !== undefined)
+    meta.push(`📊 Score: ${(skill.score * 100).toFixed(1)}%`);
   if (meta.length) lines.push(meta.join(" | "));
 
   lines.push("");
@@ -364,19 +405,21 @@ function renderSkill(skill: SkillWithScore, index?: number): string[] {
 function formatSkillsResponse(
   skills: Skill[],
   query: string,
-  pagination?: SearchResponse['data']['pagination']
+  pagination?: SearchResponse["data"]["pagination"]
 ): string {
   const lines: string[] = [
     `# 🔍 Skills Search Results: "${query}"`,
     "",
     `Found ${pagination?.total || skills.length} skill(s) (showing ${skills.length})`,
-    ""
+    "",
   ];
 
-  skills.forEach(skill => lines.push(...renderSkill(skill)));
+  skills.forEach((skill) => lines.push(...renderSkill(skill)));
 
   if (pagination?.hasNext) {
-    lines.push(`*More results available. Call this tool again with \`page: ${pagination.page + 1}\` to see more.*`);
+    lines.push(
+      `*More results available. Call this tool again with \`page: ${pagination.page + 1}\` to see more.*`
+    );
   }
 
   return lines.join("\n");
@@ -385,19 +428,24 @@ function formatSkillsResponse(
 /**
  * Format AI search response as markdown
  */
-function formatAISearchResponse(skills: SkillWithScore[], query: string): string {
+function formatAISearchResponse(
+  skills: SkillWithScore[],
+  query: string
+): string {
   const lines: string[] = [
     `# 🤖 AI Semantic Search Results`,
     "",
     `**Query**: "${query}"`,
     "",
     `Found ${skills.length} relevant skill(s)`,
-    ""
+    "",
   ];
 
   skills.forEach((skill, i) => lines.push(...renderSkill(skill, i)));
 
-  lines.push("💡 **Tip**: Use `skillsmp_install_and_read_skill` to install and load a skill's instructions.");
+  lines.push(
+    "💡 **Tip**: Use `skillsmp_install_and_read_skill` to install and load a skill's instructions."
+  );
 
   return lines.join("\n");
 }
@@ -405,19 +453,28 @@ function formatAISearchResponse(skills: SkillWithScore[], query: string): string
 /**
  * Format install and read response as markdown
  */
-function formatInstallAndReadResponse(repo: string, skillName: string, skillContent: string, wasAlreadyInstalled: boolean): string {
+function formatInstallAndReadResponse(
+  repo: string,
+  skillName: string,
+  skillContent: string,
+  wasAlreadyInstalled: boolean
+): string {
   const statusIcon = wasAlreadyInstalled ? "📖" : "📦";
-  const statusText = wasAlreadyInstalled ? "Skill Loaded (already installed)" : "Skill Installed & Loaded";
+  const statusText = wasAlreadyInstalled
+    ? "Skill Loaded (already installed)"
+    : "Skill Installed & Loaded";
 
   const lines: string[] = [
     `# ${statusIcon} ${statusText}: ${skillName}`,
     "",
     `**Repository**: ${repo}`,
-    wasAlreadyInstalled ? "**Status**: ⚡ Loaded from local cache (skipped installation)" : "**Status**: ✅ Freshly installed",
+    wasAlreadyInstalled
+      ? "**Status**: ⚡ Loaded from local cache (skipped installation)"
+      : "**Status**: ✅ Freshly installed",
     "",
     "---",
     "",
-    skillContent
+    skillContent,
   ];
 
   return lines.join("\n");
