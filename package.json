@@ -1,0 +1,49 @@
+{
+  "name": "skillsmp-mcp-lite",
+  "version": "1.0.3",
+  "description": "Lightweight MCP server for searching AI skills from SkillsMP before starting any task",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "skillsmp-mcp-lite": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "skills",
+    "ai",
+    "skillsmp",
+    "ai-skills",
+    "marketplace"
+  ],
+  "author": "clancylllin <poerevan9@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/boyonglin/skillsmp-mcp-lite.git"
+  },
+  "homepage": "https://github.com/boyonglin/skillsmp-mcp-lite#readme",
+  "bugs": {
+    "url": "https://github.com/boyonglin/skillsmp-mcp-lite/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.25.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}
