@@ -9,8 +9,6 @@ A lightweight MCP server that enables AI assistants to search for skills from [S
 
 ## Quick Setup
 
-No installation required! Just add the config to your AI client.
-
 ### VS Code / GitHub Copilot
 
 Add to your VS Code `mcp.json` (open with: `Ctrl+Shift+P` → "MCP: Open User Configuration"):
@@ -102,16 +100,14 @@ AI semantic search for skills using natural language.
 |-----------|------|----------|-------------|
 | `query` | string | Yes | Natural language description |
 
-### `skillsmp_install_and_read_skill`
+### `skillsmp_read_skill`
 
-Install a skill from GitHub and immediately read its content.
+Read a skill's content directly from a GitHub repository.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `repo` | string | Yes | GitHub repository in 'owner/repo' format |
-| `skillName` | string | Yes | Name of the skill to read after installation |
-| `global` | boolean | No | Install globally to ~/.claude/skills/ (default: false) |
-| `universal` | boolean | No | Install to .agent/skills/ for universal usage (default: false) |
+| `skillName` | string | Yes | Name of the skill to read |
 
 ## Usage Examples
 
@@ -120,7 +116,7 @@ Ask your AI assistant:
 - "Search for PDF manipulation skills"
 - "Find skills for building a web scraper"
 - "What skills can help me with SEO optimization?"
-- "Install and load the python-code-review skill from existential-birds/beagle"
+- "Read the python-code-review skill from existential-birds/beagle"
 
 ## AGENTS.md Integration
 
@@ -131,7 +127,7 @@ To enable automatic skill discovery, copy the content from [`AGENTS.example.md`]
 1. AI receives a complex task
 2. AI searches SkillsMP for relevant skills using `skillsmp_search_skills`
 3. If keyword search is insufficient, AI tries `skillsmp_ai_search_skills`
-4. If a relevant skill is found, AI installs and reads it with `skillsmp_install_and_read_skill`
+4. If a relevant skill is found, AI reads it with `skillsmp_read_skill`
 5. AI follows the skill's instructions to complete the task
 
 ### Search Tips

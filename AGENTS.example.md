@@ -15,9 +15,9 @@ skillsmp_ai_search_skills({ query: "<natural language description>" })
 ```
 
 ### Step 2: Load the best matching skill
-If search returns relevant skills (score > 0.7 or stars > 5), install and read without asking:
+If search returns relevant skills (score > 0.7 or stars > 5), read without asking:
 ```
-skillsmp_install_and_read_skill({ repo: "<author>/<repo>", skillName: "<skill-name>" })
+skillsmp_read_skill({ repo: "<author>/<repo>", skillName: "<skill-name>" })
 ```
 
 Load 1-3 complementary skills maximum. Skip near-duplicates.
@@ -37,6 +37,6 @@ Follow the loaded skill's SKILL.md instructions for the current task.
 User: "Review my Python code"
 1. `skillsmp_search_skills({ query: "python code review" })`
 2. Found: `existential-birds/beagle` → `python-code-review`
-3. `skillsmp_install_and_read_skill({ repo: "existential-birds/beagle", skillName: "python-code-review" })`
+3. `skillsmp_read_skill({ repo: "existential-birds/beagle", skillName: "python-code-review" })`
 4. Apply the skill's review checklist
 </workflow>

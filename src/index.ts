@@ -43,6 +43,7 @@ async function main() {
   console.error("Available tools:");
   console.error("  - skillsmp_search_skills: Keyword search for skills");
   console.error("  - skillsmp_ai_search_skills: AI semantic search for skills");
+  console.error("  - skillsmp_read_skill: Read skill content from GitHub");
 }
 
 main().catch((error) => {

@@ -53,8 +53,8 @@ export const AISearchSchema = z
 
 export type AISearchInput = z.infer<typeof AISearchSchema>;
 
-// Install and Read Skill Schema
-export const InstallAndReadSchema = z
+// Read Skill Schema
+export const ReadSkillSchema = z
   .object({
     repo: z
       .string()
@@ -66,22 +66,8 @@ export const InstallAndReadSchema = z
     skillName: z
       .string()
       .min(1, "Skill name is required")
-      .describe("Name of the skill to read after installation"),
-    global: z
-      .boolean()
-      .optional()
-      .default(false)
-      .describe(
-        "Install globally to ~/.claude/skills/ (default: false, installs to project)"
-      ),
-    universal: z
-      .boolean()
-      .optional()
-      .default(false)
-      .describe(
-        "Install to .agent/skills/ for universal AGENTS.md usage (default: false)"
-      ),
+      .describe("Name of the skill to read"),
   })
   .strict();
 
-export type InstallAndReadInput = z.infer<typeof InstallAndReadSchema>;
+export type ReadSkillInput = z.infer<typeof ReadSkillSchema>;

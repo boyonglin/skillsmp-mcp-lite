@@ -1,6 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { execFile } from "child_process";
 import { promisify } from "util";
+import { tmpdir } from "os";
+import { join } from "path";
+import { rm } from "fs/promises";
 import {
   makeApiRequest,
   handleApiError,
@@ -12,18 +15,18 @@ import {
 import {
   KeywordSearchSchema,
   AISearchSchema,
-  InstallAndReadSchema,
+  ReadSkillSchema,
   type KeywordSearchInput,
   type AISearchInput,
-  type InstallAndReadInput,
+  type ReadSkillInput,
 } from "../schemas.js";
 
 const execFileAsync = promisify(execFile);
 
 // Timeout constants (in milliseconds)
 const TIMEOUTS = {
-  READ: 30_000,
-  INSTALL: 120_000,
+  GIT_CLONE: 60_000,
+  GIT_SHOW: 15_000,
 } as const;
 
 /**
@@ -224,22 +227,20 @@ Examples:
     }
   );
 
-  // Tool 3: Install and Read Skill
+  // Tool 3: Read Skill
   server.registerTool(
-    "skillsmp_install_and_read_skill",
+    "skillsmp_read_skill",
     {
-      title: "Install and Read Skill",
-      description: `Install a skill from GitHub and immediately read its content.
+      title: "Read Skill",
+      description: `Read a skill's content directly from a GitHub repository.
 
-This tool first checks if the skill is already installed locally. If found, it skips installation and directly reads the content (faster). If not found, it installs from GitHub first.
+This tool fetches the SKILL.md content from a GitHub repo without checking out files to disk, avoiding antivirus and Windows path issues.
 
 **IMPORTANT**: Use this to quickly load skill instructions without manual steps.
 
 Args:
   - repo (string, required): GitHub repository in 'owner/repo' format
-  - skillName (string, required): Name of the skill to read after installation
-  - global (boolean, optional): Install globally to ~/.claude/skills/ (default: false)
-  - universal (boolean, optional): Install to .agent/skills/ for universal usage (default: false)
+  - skillName (string, required): Name of the skill to read
 
 Returns:
   The full content of the skill's instructions (SKILL.md).
@@ -247,106 +248,154 @@ Returns:
 Examples:
   - repo: "existential-birds/beagle", skillName: "python-code-review"
   - repo: "LA3D/skillhelper", skillName: "code-reviewer"`,
-      inputSchema: InstallAndReadSchema,
+      inputSchema: ReadSkillSchema,
       annotations: {
-        readOnlyHint: false,
-        destructiveHint: true,
-        idempotentHint: false,
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
         openWorldHint: true,
       },
     },
-    async (params: InstallAndReadInput) => {
+    async (params: ReadSkillInput) => {
+      const repoUrl = `https://github.com/${params.repo}.git`;
+      const tempDir = join(
+        tmpdir(),
+        `skillsmp-read-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      );
+
       try {
-        const readArgs = ["-y", "openskills", "read", params.skillName];
-        if (params.global) readArgs.push("--global");
-        if (params.universal) readArgs.push("--universal");
-
-        // Step 1: Check if skill already exists locally
+        // Step 1: Shallow clone without checkout (no files written to disk)
         try {
-          const { stdout } = await execFileAsync("npx", readArgs, {
-            timeout: TIMEOUTS.READ,
-            shell: true,
-          });
-          if (
-            stdout &&
-            !stdout.includes("not found") &&
-            !stdout.includes("Error")
-          ) {
-            const output = formatInstallAndReadResponse(
-              params.repo,
-              params.skillName,
-              stdout,
-              true
-            );
-            return {
-              content: [{ type: "text" as const, text: output }],
-              structuredContent: {
-                repo: params.repo,
-                skillName: params.skillName,
-                skillContent: stdout,
-                wasAlreadyInstalled: true,
-              },
-            };
-          }
-        } catch {
-          // Skill not found locally, proceed with installation
-        }
-
-        // Step 2: Install if not exists (use --yes to skip interactive selection)
-        const installArgs = [
-          "-y",
-          "openskills",
-          "install",
-          "--yes",
-          params.repo,
-        ];
-        if (params.global) installArgs.push("--global");
-        if (params.universal) installArgs.push("--universal");
-
-        let installOutput: string;
-        try {
-          const { stdout, stderr } = await execFileAsync("npx", installArgs, {
-            timeout: TIMEOUTS.INSTALL,
-            shell: true,
-          });
-          installOutput = stdout || stderr;
-        } catch (installError) {
-          const errorDetails = getErrorDetails(installError);
+          await execFileAsync(
+            "git",
+            ["clone", "--no-checkout", "--depth", "1", repoUrl, tempDir],
+            { timeout: TIMEOUTS.GIT_CLONE }
+          );
+        } catch (cloneError) {
+          const errorDetails = getErrorDetails(cloneError);
           return {
             content: [
               {
                 type: "text" as const,
-                text: `❌ **Installation Failed**\n\nRepository: ${params.repo}\n\nError:\n${errorDetails.stderr || errorDetails.message}`,
+                text: `❌ **Clone Failed**\n\nRepository: ${params.repo}\n\nError:\n${errorDetails.stderr || errorDetails.message}\n\n💡 **Tip**: For private repos, ensure git SSH keys or credentials are configured`,
               },
             ],
           };
         }
 
-        // Step 3: Read the skill after installation
-        let readOutput: string;
+        // Step 2: Find SKILL.md via git ls-tree (handles any directory structure)
+        let skillPath: string | null = null;
         try {
-          const { stdout, stderr } = await execFileAsync("npx", readArgs, {
-            shell: true,
-            timeout: TIMEOUTS.READ,
-          });
-          readOutput = stdout || stderr;
+          // Use grep to filter only SKILL.md paths directly in git, avoiding large output
+          const { stdout } = await execFileAsync(
+            "git",
+            [
+              "ls-tree",
+              "-r",
+              "--name-only",
+              "HEAD",
+              `**/${params.skillName}/**/SKILL.md`,
+              `**/${params.skillName}/SKILL.md`,
+            ],
+            {
+              cwd: tempDir,
+              timeout: TIMEOUTS.GIT_SHOW,
+              maxBuffer: 10 * 1024 * 1024,
+            }
+          );
+          let skillFiles = stdout
+            .split("\n")
+            .filter((f) => f.endsWith("SKILL.md"));
+
+          // If pathspec matching returned nothing, fall back to full listing with filter
+          if (!skillFiles.length) {
+            const { stdout: fullStdout } = await execFileAsync(
+              "git",
+              ["ls-tree", "-r", "--name-only", "HEAD"],
+              {
+                cwd: tempDir,
+                timeout: TIMEOUTS.GIT_SHOW,
+                maxBuffer: 50 * 1024 * 1024,
+              }
+            );
+            skillFiles = fullStdout
+              .split("\n")
+              .filter((f) => f.endsWith("SKILL.md"))
+              .filter((f) =>
+                f.toLowerCase().includes(params.skillName.toLowerCase())
+              );
+          }
+
+          // Find the best match: look for skillName in the path
+          skillPath =
+            skillFiles.find((f) =>
+              f.toLowerCase().includes(params.skillName.toLowerCase())
+            ) || null;
+
+          // If no match by skillName, try first SKILL.md
+          if (!skillPath && skillFiles.length === 1) {
+            skillPath = skillFiles[0];
+          }
+
+          if (!skillPath && skillFiles.length > 1) {
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text: `❌ **Skill Not Found**: Could not find SKILL.md matching "${params.skillName}".\n\n**Available SKILL.md files in this repo:**\n${skillFiles.map((f) => `- ${f}`).join("\n")}\n\n💡 **Tip**: Use a more specific skillName that matches part of the path.`,
+                },
+              ],
+            };
+          }
+        } catch (lsError) {
+          const errorDetails = getErrorDetails(lsError);
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `❌ **List Failed**\n\nError:\n${errorDetails.stderr || errorDetails.message}`,
+              },
+            ],
+          };
+        }
+
+        if (!skillPath) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `❌ **Skill Not Found**: No SKILL.md found matching "${params.skillName}" in ${params.repo}.`,
+              },
+            ],
+          };
+        }
+
+        // Step 3: Read SKILL.md content via git show (no checkout needed)
+        let skillContent: string;
+        try {
+          const { stdout } = await execFileAsync(
+            "git",
+            ["show", `HEAD:${skillPath}`],
+            { cwd: tempDir, timeout: TIMEOUTS.GIT_SHOW, maxBuffer: 1024 * 1024 }
+          );
+          skillContent = stdout;
         } catch (readError) {
           const errorDetails = getErrorDetails(readError);
           return {
             content: [
               {
                 type: "text" as const,
-                text: `✅ **Installation Succeeded** but **Read Failed**\n\nRepository: ${params.repo}\nSkill: ${params.skillName}\n\n**Install Output:**\n${installOutput}\n\n**Read Error:**\n${errorDetails.stderr || errorDetails.message}\n\n💡 **Tip**: Check if the skill name is correct. Use \`npx openskills list\` to see installed skills.`,
+                text: `❌ **Read Failed**\n\nPath: ${skillPath}\nError:\n${errorDetails.stderr || errorDetails.message}`,
               },
             ],
           };
         }
 
-        const output = formatInstallAndReadResponse(
+        const output = formatReadSkillResponse(
           params.repo,
           params.skillName,
-          readOutput,
-          false
+          skillContent,
+          skillPath
         );
 
         return {
@@ -354,8 +403,8 @@ Examples:
           structuredContent: {
             repo: params.repo,
             skillName: params.skillName,
-            skillContent: readOutput,
-            wasAlreadyInstalled: false,
+            skillContent: skillContent,
+            resolvedPath: skillPath,
           },
         };
       } catch (error) {
@@ -367,6 +416,9 @@ Examples:
             },
           ],
         };
+      } finally {
+        // Always clean up temp dir
+        await rm(tempDir, { recursive: true, force: true }).catch(() => {});
       }
     }
   );
@@ -455,33 +507,26 @@ function formatAISearchResponse(
   skills.forEach((skill, i) => lines.push(...renderSkill(skill, i)));
 
   lines.push(
-    "💡 **Tip**: Use `skillsmp_install_and_read_skill` to install and load a skill's instructions."
+    "💡 **Tip**: Use `skillsmp_read_skill` to read a skill's instructions."
   );
 
   return lines.join("\n");
 }
 
 /**
- * Format install and read response as markdown
+ * Format read skill response as markdown
  */
-function formatInstallAndReadResponse(
+function formatReadSkillResponse(
   repo: string,
   skillName: string,
   skillContent: string,
-  wasAlreadyInstalled: boolean
+  resolvedPath: string
 ): string {
-  const statusIcon = wasAlreadyInstalled ? "📖" : "📦";
-  const statusText = wasAlreadyInstalled
-    ? "Skill Loaded (already installed)"
-    : "Skill Installed & Loaded";
-
   const lines: string[] = [
-    `# ${statusIcon} ${statusText}: ${skillName}`,
+    `# 📖 Skill Read: ${skillName}`,
     "",
     `**Repository**: ${repo}`,
-    wasAlreadyInstalled
-      ? "**Status**: ⚡ Loaded from local cache (skipped installation)"
-      : "**Status**: ✅ Freshly installed",
+    `**Path**: ${resolvedPath}`,
     "",
     "---",
     "",
