@@ -23,6 +23,7 @@ export default [
         setTimeout: "readonly",
         clearTimeout: "readonly",
         Response: "readonly",
+        DOMException: "readonly",
       },
     },
     plugins: {
