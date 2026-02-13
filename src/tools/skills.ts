@@ -20,7 +20,6 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-// Timeout constants (in milliseconds)
 const TIMEOUTS = {
   GITHUB_API: 30_000,
   SKILL_SCAN_API: 60_000,
@@ -28,7 +27,6 @@ const TIMEOUTS = {
   API_STARTUP: 30_000,
 } as const;
 
-// Skill Scanner API configuration
 const SKILL_SCANNER_API_URL = process.env.SKILL_SCANNER_API_URL || "";
 const SCANNER_API_PORT = Number.isFinite(
   Number.parseInt(process.env.SKILL_SCANNER_API_PORT || "", 10)
@@ -230,8 +228,6 @@ function shutdownManagedApi() {
   }
 }
 
-// Clean up on process exit — SIGINT/SIGTERM call process.exit(), which
-// triggers the "exit" event where the actual cleanup runs.
 process.on("exit", shutdownManagedApi);
 process.on("SIGINT", () => process.exit(0));
 process.on("SIGTERM", () => process.exit(0));
@@ -254,20 +250,9 @@ interface ScanResult {
   error?: string;
 }
 
-function getErrorDetails(error: unknown): { message: string; stderr?: string } {
+function getErrorDetails(error: unknown): { message: string } {
   if (error instanceof Error) {
-    const execError = error as Error & { stderr?: string; stdout?: string };
-    return {
-      message: execError.message,
-      stderr: execError.stderr,
-    };
-  }
-  if (typeof error === "object" && error !== null) {
-    const e = error as Record<string, unknown>;
-    return {
-      message: String(e.message || "Unknown error"),
-      stderr: typeof e.stderr === "string" ? e.stderr : undefined,
-    };
+    return { message: error.message };
   }
   return { message: String(error) };
 }
@@ -512,7 +497,7 @@ function crc32(buf: Buffer): number {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-// ── Scan via /scan-upload (ZIP upload, no local files) ────────────────────────
+// ── Scan via /scan-upload ─────────────────────────────────────────────────────
 
 async function runSkillScannerApi(
   files: Map<string, Buffer>,
@@ -521,7 +506,6 @@ async function runSkillScannerApi(
   const scanUrl = `${apiUrl.replace(/\/$/, "")}/scan-upload`;
   const zipBuffer = buildZipBuffer(files);
 
-  // Build multipart/form-data manually to avoid external dependencies
   const boundary = `----SkillSMPBoundary${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const header = Buffer.from(
     `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="skill.zip"\r\nContent-Type: application/zip\r\n\r\n`
