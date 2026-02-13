@@ -81,6 +81,19 @@ Get your API key from: https://skillsmp.com/docs/api
 
 > **Note**: The API key is required. The server will exit if `SKILLSMP_API_KEY` is not set.
 
+### GitHub Token (Optional)
+
+Set `GITHUB_TOKEN` to increase the GitHub API rate limit from 60 to 5,000 requests/hour:
+
+```json
+"env": {
+  "SKILLSMP_API_KEY": "YOUR_API_KEY",
+  "GITHUB_TOKEN": "YOUR_GITHUB_TOKEN"
+}
+```
+
+Without a token the server still works, but may hit rate limits under heavy use.
+
 ### Skill Scanner
 
 Security scanning is available when the required tooling is installed — no extra configuration is needed. When `skillsmp_read_skill` is called with `enableScan: true`, the server will:

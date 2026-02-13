@@ -1,6 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { spawn, spawnSync, type ChildProcess } from "child_process";
-import { execFile } from "child_process";
+import { execFile, spawn, spawnSync, type ChildProcess } from "child_process";
 import { promisify } from "util";
 import {
   makeApiRequest,
@@ -275,6 +274,20 @@ function getErrorDetails(error: unknown): { message: string; stderr?: string } {
 
 // ── GitHub API helpers ─────────────────────────────────────────────────────────
 
+function githubHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    Accept: "application/vnd.github+json",
+    "User-Agent": "skillsmp-mcp-lite",
+  };
+  const token = process.env.GITHUB_TOKEN;
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  return headers;
+}
+
+const GITHUB_FILE_FETCH_CONCURRENCY = 10;
+
 interface GitHubTreeItem {
   path: string;
   type: string;
@@ -295,20 +308,25 @@ async function fetchGitHubTree(
   try {
     const res = await fetch(
       `https://api.github.com/repos/${repo}/git/trees/HEAD?recursive=1`,
-      {
-        headers: {
-          Accept: "application/vnd.github+json",
-          "User-Agent": "skillsmp-mcp-lite",
-        },
-        signal: controller.signal,
-      }
+      { headers: githubHeaders(), signal: controller.signal }
     );
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       return { items: [], error: `GitHub API ${res.status}: ${body}` };
     }
-    const json = (await res.json()) as { tree: GitHubTreeItem[] };
-    return { items: json.tree.filter((e) => e.type === "blob") };
+    const json = (await res.json()) as {
+      tree: GitHubTreeItem[];
+      truncated?: boolean;
+    };
+    const blobs = json.tree.filter((e) => e.type === "blob");
+    if (json.truncated) {
+      return {
+        items: blobs,
+        error:
+          "GitHub API tree response was truncated; results may be incomplete.",
+      };
+    }
+    return { items: blobs };
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     return { items: [], error: `GitHub API error: ${msg}` };
@@ -330,13 +348,7 @@ async function fetchGitHubFileContent(
   try {
     const res = await fetch(
       `https://api.github.com/repos/${repo}/contents/${encodeURIComponent(path)}`,
-      {
-        headers: {
-          Accept: "application/vnd.github+json",
-          "User-Agent": "skillsmp-mcp-lite",
-        },
-        signal: controller.signal,
-      }
+      { headers: githubHeaders(), signal: controller.signal }
     );
     if (!res.ok) {
       const body = await res.text().catch(() => "");
@@ -364,40 +376,47 @@ async function fetchGitHubFiles(
   paths: string[]
 ): Promise<Map<string, Buffer>> {
   const result = new Map<string, Buffer>();
-  await Promise.all(
-    paths.map(async (p) => {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(
-        () => controller.abort(),
-        TIMEOUTS.GITHUB_API
-      );
-      try {
-        const res = await fetch(
-          `https://api.github.com/repos/${repo}/contents/${encodeURIComponent(p)}`,
-          {
-            headers: {
-              Accept: "application/vnd.github+json",
-              "User-Agent": "skillsmp-mcp-lite",
-            },
-            signal: controller.signal,
-          }
+
+  for (let i = 0; i < paths.length; i += GITHUB_FILE_FETCH_CONCURRENCY) {
+    const batch = paths.slice(i, i + GITHUB_FILE_FETCH_CONCURRENCY);
+    await Promise.all(
+      batch.map(async (p) => {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(
+          () => controller.abort(),
+          TIMEOUTS.GITHUB_API
         );
-        if (res.ok) {
-          const json = (await res.json()) as {
-            content?: string;
-            encoding?: string;
-          };
-          if (json.encoding === "base64" && json.content) {
-            result.set(p, Buffer.from(json.content, "base64"));
+        try {
+          const res = await fetch(
+            `https://api.github.com/repos/${repo}/contents/${encodeURIComponent(p)}`,
+            { headers: githubHeaders(), signal: controller.signal }
+          );
+          if (res.ok) {
+            const json = (await res.json()) as {
+              content?: string;
+              encoding?: string;
+            };
+            if (json.encoding === "base64" && json.content) {
+              result.set(p, Buffer.from(json.content, "base64"));
+            }
+          } else {
+            console.warn(
+              `GitHub contents API returned ${res.status} for "${p}"`
+            );
           }
+        } catch (err) {
+          console.warn(
+            `Failed to fetch "${p}": ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          );
+        } finally {
+          clearTimeout(timeoutId);
         }
-      } catch {
-        // skip files that fail
-      } finally {
-        clearTimeout(timeoutId);
-      }
-    })
-  );
+      })
+    );
+  }
+
   return result;
 }
 
@@ -503,7 +522,7 @@ async function runSkillScannerApi(
   const zipBuffer = buildZipBuffer(files);
 
   // Build multipart/form-data manually to avoid external dependencies
-  const boundary = `----SkillSMPBoundary${Date.now()}`;
+  const boundary = `----SkillSMPBoundary${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const header = Buffer.from(
     `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="skill.zip"\r\nContent-Type: application/zip\r\n\r\n`
   );
@@ -894,6 +913,16 @@ Examples:
                 ? fullPath.slice(skillDirPrefix.length)
                 : fullPath;
               relativeFiles.set(relativePath, buf);
+            }
+
+            // Ensure we have at least SKILL.md before scanning
+            const skillMdKey = skillDirPrefix
+              ? skillPath.slice(skillDirPrefix.length)
+              : skillPath;
+            if (relativeFiles.size === 0 || !relativeFiles.has(skillMdKey)) {
+              throw new Error(
+                `No valid skill files were fetched for scanning (missing ${skillMdKey}).`
+              );
             }
 
             scanResult = await runSkillScanner(relativeFiles);
