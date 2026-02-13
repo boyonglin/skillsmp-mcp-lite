@@ -79,6 +79,26 @@ Get your API key from: https://skillsmp.com/docs/api
 
 > **Note**: The API key is required. The server will exit if `SKILLSMP_API_KEY` is not set.
 
+### Skill Scanner
+
+Security scanning is available when the required tooling is installed — no extra configuration is needed. When `skillsmp_read_skill` is called with `enableScan: true`, the server will:
+
+1. **Auto-start** a local `skill-scanner-api` server via `uvx` on a configurable port (default 8000)
+2. **Reuse** that server for all subsequent scans (no cold-start overhead)
+3. **Shut down** the server automatically when the MCP server exits
+
+**Prerequisite**: [uv](https://docs.astral.sh/uv/getting-started/installation/) must be installed (provides `uvx`). If `uvx` is not found, scan requests are skipped and the server continues to function normally — you may see a non-fatal warning. Scanning is enabled by default (`enableScan` defaults to `true`).
+
+You can also manage the server manually if preferred:
+
+```bash
+# Start the scanner API server yourself
+npm run scanner-api
+
+# Or point to an external server
+SKILL_SCANNER_API_URL=http://your-server:8000
+```
+
 ## Available Tools
 
 ### `skillsmp_search_skills`
@@ -108,6 +128,7 @@ Read a skill's content directly from a GitHub repository.
 |-----------|------|----------|-------------|
 | `repo` | string | Yes | GitHub repository in 'owner/repo' format |
 | `skillName` | string | Yes | Name of the skill to read |
+| `enableScan` | boolean | No | Run Cisco Skill Scanner security scan (default: true, requires uv) |
 
 ## Usage Examples
 

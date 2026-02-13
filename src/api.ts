@@ -81,11 +81,11 @@ export async function makeApiRequest<T>(
   const url = new URL(`${SKILLSMP_API_BASE}/${endpoint}`);
 
   if (params) {
-    Object.entries(params).forEach(([key, value]) => {
-      if (value !== undefined && value !== null) {
+    for (const [key, value] of Object.entries(params)) {
+      if (value != null) {
         url.searchParams.append(key, String(value));
       }
-    });
+    }
   }
 
   const controller = new AbortController();
@@ -93,7 +93,7 @@ export async function makeApiRequest<T>(
 
   let response: Response;
   try {
-    response = await fetch(url.toString(), {
+    response = await fetch(url, {
       method: "GET",
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -203,7 +203,7 @@ export class ApiRequestError extends Error {
 // Error Handler
 export function handleApiError(error: unknown): string {
   if (error instanceof ApiStructureError) {
-    return `⚠️ API Structure Error: ${error.message}\n\nThis likely means the SkillsMP API has changed. Please report this issue.`;
+    return `API Structure Error: ${error.message}\n\nThis likely means the SkillsMP API has changed. Please report this issue.`;
   }
   if (error instanceof ApiRequestError) {
     if (error.statusCode === 401) {
@@ -215,13 +215,6 @@ export function handleApiError(error: unknown): string {
     return `Error: ${error.message} (HTTP ${error.statusCode})`;
   }
   if (error instanceof Error) {
-    // Fallback for other errors
-    if (error.message.includes("401")) {
-      return "Error: Invalid or missing API key. Please check your SKILLSMP_API_KEY environment variable.";
-    }
-    if (error.message.includes("429")) {
-      return "Error: Rate limit exceeded. Please wait before making more requests.";
-    }
     return `Error: ${error.message}`;
   }
   return "Error: An unexpected error occurred";
