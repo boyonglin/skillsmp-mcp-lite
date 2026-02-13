@@ -79,6 +79,33 @@ Get your API key from: https://skillsmp.com/docs/api
 
 > **Note**: The API key is required. The server will exit if `SKILLSMP_API_KEY` is not set.
 
+## Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `SKILLSMP_API_KEY` | Yes | Your SkillsMP API key |
+| `SKILL_SCANNER_API_URL` | No | URL of an external [Cisco Skill Scanner API](https://github.com/cisco/skill-scanner) server. Only needed if you want to point to a specific server — otherwise the auto-managed server is used. |
+
+### Skill Scanner (Automatic)
+
+Security scanning is fully automatic — no manual setup required. When `skillsmp_read_skill` runs a scan, the server will:
+
+1. **Auto-start** a local `skill-scanner-api` server via `uvx` on port 8000
+2. **Reuse** that server for all subsequent scans (no cold-start overhead)
+3. **Shut down** the server automatically when the MCP server exits
+
+**Prerequisite**: [uv](https://docs.astral.sh/uv/getting-started/installation/) must be installed (provides `uvx`). If `uvx` is not found, scans are skipped gracefully.
+
+You can also manage the server manually if preferred:
+
+```bash
+# Start the scanner API server yourself
+npm run scanner-api
+
+# Or point to an external server
+SKILL_SCANNER_API_URL=http://your-server:8000
+```
+
 ## Available Tools
 
 ### `skillsmp_search_skills`
