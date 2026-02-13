@@ -1,9 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { execFile, spawn, spawnSync, type ChildProcess } from "child_process";
+import { spawn, spawnSync, type ChildProcess } from "child_process";
+import { execFile } from "child_process";
 import { promisify } from "util";
-import { tmpdir } from "os";
-import { join } from "path";
-import { rm } from "fs/promises";
 import {
   makeApiRequest,
   handleApiError,
@@ -25,15 +23,11 @@ const execFileAsync = promisify(execFile);
 
 // Timeout constants (in milliseconds)
 const TIMEOUTS = {
-  GIT_CLONE: 60_000,
-  GIT_SHOW: 15_000,
+  GITHUB_API: 30_000,
   SKILL_SCAN_API: 60_000,
   API_HEALTH_POLL: 500,
   API_STARTUP: 30_000,
 } as const;
-
-// Buffer size for git operations (10 MB)
-const MAX_GIT_BUFFER = 10 * 1024 * 1024;
 
 // Skill Scanner API configuration
 const SKILL_SCANNER_API_URL = process.env.SKILL_SCANNER_API_URL || "";
@@ -279,11 +273,242 @@ function getErrorDetails(error: unknown): { message: string; stderr?: string } {
   return { message: String(error) };
 }
 
+// ── GitHub API helpers ─────────────────────────────────────────────────────────
+
+interface GitHubTreeItem {
+  path: string;
+  type: string;
+  sha: string;
+  size?: number;
+}
+
+/**
+ * Fetch the file tree of a GitHub repo's default branch via the API.
+ * Returns an array of blob entries (files only).
+ */
+async function fetchGitHubTree(
+  repo: string
+): Promise<{ items: GitHubTreeItem[]; error?: string }> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), TIMEOUTS.GITHUB_API);
+
+  try {
+    const res = await fetch(
+      `https://api.github.com/repos/${repo}/git/trees/HEAD?recursive=1`,
+      {
+        headers: {
+          Accept: "application/vnd.github+json",
+          "User-Agent": "skillsmp-mcp-lite",
+        },
+        signal: controller.signal,
+      }
+    );
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      return { items: [], error: `GitHub API ${res.status}: ${body}` };
+    }
+    const json = (await res.json()) as { tree: GitHubTreeItem[] };
+    return { items: json.tree.filter((e) => e.type === "blob") };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return { items: [], error: `GitHub API error: ${msg}` };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
+ * Read a single file from a GitHub repo via the Contents API (base64).
+ */
+async function fetchGitHubFileContent(
+  repo: string,
+  path: string
+): Promise<{ content: string; error?: string }> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), TIMEOUTS.GITHUB_API);
+
+  try {
+    const res = await fetch(
+      `https://api.github.com/repos/${repo}/contents/${encodeURIComponent(path)}`,
+      {
+        headers: {
+          Accept: "application/vnd.github+json",
+          "User-Agent": "skillsmp-mcp-lite",
+        },
+        signal: controller.signal,
+      }
+    );
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      return { content: "", error: `GitHub API ${res.status}: ${body}` };
+    }
+    const json = (await res.json()) as { content?: string; encoding?: string };
+    if (json.encoding === "base64" && json.content) {
+      return { content: Buffer.from(json.content, "base64").toString("utf-8") };
+    }
+    return { content: "", error: "Unexpected encoding or empty content" };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return { content: "", error: `GitHub API error: ${msg}` };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
+ * Fetch multiple files from a GitHub repo in parallel and return their raw
+ * bytes keyed by relative path.
+ */
+async function fetchGitHubFiles(
+  repo: string,
+  paths: string[]
+): Promise<Map<string, Buffer>> {
+  const result = new Map<string, Buffer>();
+  await Promise.all(
+    paths.map(async (p) => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(
+        () => controller.abort(),
+        TIMEOUTS.GITHUB_API
+      );
+      try {
+        const res = await fetch(
+          `https://api.github.com/repos/${repo}/contents/${encodeURIComponent(p)}`,
+          {
+            headers: {
+              Accept: "application/vnd.github+json",
+              "User-Agent": "skillsmp-mcp-lite",
+            },
+            signal: controller.signal,
+          }
+        );
+        if (res.ok) {
+          const json = (await res.json()) as {
+            content?: string;
+            encoding?: string;
+          };
+          if (json.encoding === "base64" && json.content) {
+            result.set(p, Buffer.from(json.content, "base64"));
+          }
+        }
+      } catch {
+        // skip files that fail
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    })
+  );
+  return result;
+}
+
+// ── Minimal in-memory ZIP builder (no dependencies) ───────────────────────────
+// Builds an uncompressed (STORE) ZIP archive that the scanner API can accept.
+
+function buildZipBuffer(files: Map<string, Buffer>): Buffer {
+  const entries: { name: Buffer; data: Buffer; offset: number }[] = [];
+  const parts: Buffer[] = [];
+  let offset = 0;
+
+  for (const [name, data] of files) {
+    const nameBytes = Buffer.from(name, "utf-8");
+
+    // Local file header (30 + nameLen + dataLen)
+    const localHeader = Buffer.alloc(30);
+    localHeader.writeUInt32LE(0x04034b50, 0); // signature
+    localHeader.writeUInt16LE(20, 4); // version needed
+    localHeader.writeUInt16LE(0, 6); // flags
+    localHeader.writeUInt16LE(0, 8); // compression: STORE
+    localHeader.writeUInt16LE(0, 10); // mod time
+    localHeader.writeUInt16LE(0, 12); // mod date
+    localHeader.writeUInt32LE(crc32(data), 14); // crc-32
+    localHeader.writeUInt32LE(data.length, 18); // compressed size
+    localHeader.writeUInt32LE(data.length, 22); // uncompressed size
+    localHeader.writeUInt16LE(nameBytes.length, 26); // name length
+    localHeader.writeUInt16LE(0, 28); // extra field length
+
+    entries.push({ name: nameBytes, data, offset });
+    parts.push(localHeader, nameBytes, data);
+    offset += 30 + nameBytes.length + data.length;
+  }
+
+  // Central directory
+  const cdStart = offset;
+  for (const entry of entries) {
+    const cdHeader = Buffer.alloc(46);
+    cdHeader.writeUInt32LE(0x02014b50, 0); // signature
+    cdHeader.writeUInt16LE(20, 4); // version made by
+    cdHeader.writeUInt16LE(20, 6); // version needed
+    cdHeader.writeUInt16LE(0, 8); // flags
+    cdHeader.writeUInt16LE(0, 10); // compression
+    cdHeader.writeUInt16LE(0, 12); // mod time
+    cdHeader.writeUInt16LE(0, 14); // mod date
+    cdHeader.writeUInt32LE(crc32(entry.data), 16); // crc-32
+    cdHeader.writeUInt32LE(entry.data.length, 20); // compressed size
+    cdHeader.writeUInt32LE(entry.data.length, 24); // uncompressed size
+    cdHeader.writeUInt16LE(entry.name.length, 28); // name length
+    cdHeader.writeUInt16LE(0, 30); // extra field length
+    cdHeader.writeUInt16LE(0, 32); // comment length
+    cdHeader.writeUInt16LE(0, 34); // disk number start
+    cdHeader.writeUInt16LE(0, 36); // internal file attributes
+    cdHeader.writeUInt32LE(0, 38); // external file attributes
+    cdHeader.writeUInt32LE(entry.offset, 42); // relative offset
+    parts.push(cdHeader, entry.name);
+    offset += 46 + entry.name.length;
+  }
+
+  // End of central directory
+  const cdSize = offset - cdStart;
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0); // signature
+  eocd.writeUInt16LE(0, 4); // disk number
+  eocd.writeUInt16LE(0, 6); // disk with CD
+  eocd.writeUInt16LE(entries.length, 8); // entries on disk
+  eocd.writeUInt16LE(entries.length, 10); // total entries
+  eocd.writeUInt32LE(cdSize, 12); // size of CD
+  eocd.writeUInt32LE(cdStart, 16); // offset of CD
+  eocd.writeUInt16LE(0, 20); // comment length
+  parts.push(eocd);
+
+  return Buffer.concat(parts);
+}
+
+/** CRC-32 (IEEE 802.3) – tiny table-based implementation */
+const crc32Table: number[] = (() => {
+  const table: number[] = new Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) {
+      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    }
+    table[n] = c;
+  }
+  return table;
+})();
+
+function crc32(buf: Buffer): number {
+  let crc = 0xffffffff;
+  for (let i = 0; i < buf.length; i++) {
+    crc = crc32Table[(crc ^ buf[i]!) & 0xff]! ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+// ── Scan via /scan-upload (ZIP upload, no local files) ────────────────────────
+
 async function runSkillScannerApi(
-  skillDir: string,
+  files: Map<string, Buffer>,
   apiUrl: string
 ): Promise<ScanResult> {
-  const scanUrl = `${apiUrl.replace(/\/$/, "")}/scan`;
+  const scanUrl = `${apiUrl.replace(/\/$/, "")}/scan-upload`;
+  const zipBuffer = buildZipBuffer(files);
+
+  // Build multipart/form-data manually to avoid external dependencies
+  const boundary = `----SkillSMPBoundary${Date.now()}`;
+  const header = Buffer.from(
+    `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="skill.zip"\r\nContent-Type: application/zip\r\n\r\n`
+  );
+  const footer = Buffer.from(`\r\n--${boundary}--\r\n`);
+  const body = Buffer.concat([header, zipBuffer, footer]);
 
   const controller = new AbortController();
   const timeoutId = setTimeout(
@@ -294,8 +519,8 @@ async function runSkillScannerApi(
   try {
     const response = await fetch(scanUrl, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ skill_directory: skillDir }),
+      headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` },
+      body,
       signal: controller.signal,
     });
 
@@ -358,7 +583,9 @@ async function runSkillScannerApi(
   }
 }
 
-async function runSkillScanner(skillDir: string): Promise<ScanResult> {
+async function runSkillScanner(
+  files: Map<string, Buffer>
+): Promise<ScanResult> {
   const apiUrl = await ensureScannerApi();
 
   if (!apiUrl) {
@@ -373,7 +600,7 @@ async function runSkillScanner(skillDir: string): Promise<ScanResult> {
     };
   }
 
-  return runSkillScannerApi(skillDir, apiUrl);
+  return runSkillScannerApi(files, apiUrl);
 }
 
 /**
@@ -547,9 +774,9 @@ Examples:
     "skillsmp_read_skill",
     {
       title: "Read Skill",
-      description: `Read a skill's content directly from a GitHub repository and automatically run Cisco Skill Scanner security analysis.
+      description: `Read a skill's content directly from a GitHub repository (via GitHub API, fully online — no local clone) and optionally run Cisco Skill Scanner security analysis.
 
-This tool fetches the SKILL.md content from a GitHub repo, then automatically starts a local Skill Scanner API server (via uvx) to detect prompt injection, data exfiltration, and malicious code patterns. The server is reused across scans for fast performance. The skill is NOT installed — only read and scanned.
+This tool fetches the SKILL.md content using the GitHub REST API, then optionally starts a local Skill Scanner API server (via uvx) and uploads the skill files as a ZIP for scanning. No files are written to disk. The skill is NOT installed — only read and scanned.
 
 **IMPORTANT**: Use this to quickly load skill instructions and verify safety without manual steps.
 
@@ -573,103 +800,43 @@ Examples:
       },
     },
     async (params: ReadSkillInput) => {
-      const repoUrl = `https://github.com/${params.repo}.git`;
-      const tempDir = join(
-        tmpdir(),
-        `skillsmp-read-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-      );
-
       try {
-        // Step 1: Shallow clone without checkout (no files written to disk)
-        try {
-          await execFileAsync(
-            "git",
-            ["clone", "--no-checkout", "--depth", "1", repoUrl, tempDir],
-            { timeout: TIMEOUTS.GIT_CLONE }
-          );
-        } catch (cloneError) {
-          const errorDetails = getErrorDetails(cloneError);
+        // Step 1: Fetch the repo file tree via GitHub API
+        const { items: treeItems, error: treeError } = await fetchGitHubTree(
+          params.repo
+        );
+        if (treeError || !treeItems.length) {
           return {
             content: [
               {
                 type: "text" as const,
-                text: `❌ **Clone Failed**\n\nRepository: ${params.repo}\n\nError:\n${errorDetails.stderr || errorDetails.message}\n\n💡 **Tip**: For private repos, ensure git SSH keys or credentials are configured`,
+                text: `❌ **Repository Fetch Failed**\n\nRepository: ${params.repo}\n\nError:\n${treeError || "Empty or inaccessible repository"}\n\n💡 **Tip**: Ensure the repository is public or configure a GITHUB_TOKEN.`,
               },
             ],
           };
         }
 
-        // Step 2: Find SKILL.md via git ls-tree (handles any directory structure)
-        let skillPath: string | null = null;
-        try {
-          // Use grep to filter only SKILL.md paths directly in git, avoiding large output
-          const { stdout } = await execFileAsync(
-            "git",
-            [
-              "ls-tree",
-              "-r",
-              "--name-only",
-              "HEAD",
-              `**/${params.skillName}/**/SKILL.md`,
-              `**/${params.skillName}/SKILL.md`,
-            ],
-            {
-              cwd: tempDir,
-              timeout: TIMEOUTS.GIT_SHOW,
-              maxBuffer: MAX_GIT_BUFFER,
-            }
-          );
-          let skillFiles = stdout
-            .split("\n")
-            .filter((f) => f.endsWith("SKILL.md"));
+        // Step 2: Find SKILL.md matching the skillName
+        const skillFiles = treeItems
+          .map((item) => item.path)
+          .filter((p) => p.endsWith("SKILL.md"));
 
-          // If pathspec matching returned nothing, fall back to full listing with filter
-          if (!skillFiles.length) {
-            const { stdout: fullStdout } = await execFileAsync(
-              "git",
-              ["ls-tree", "-r", "--name-only", "HEAD"],
-              {
-                cwd: tempDir,
-                timeout: TIMEOUTS.GIT_SHOW,
-                maxBuffer: MAX_GIT_BUFFER, // 10MB — sufficient for skill repos
-              }
-            );
-            skillFiles = fullStdout
-              .split("\n")
-              .filter((f) => f.endsWith("SKILL.md"))
-              .filter((f) =>
-                f.toLowerCase().includes(params.skillName.toLowerCase())
-              );
-          }
+        let skillPath =
+          skillFiles.find((f) =>
+            f.toLowerCase().includes(params.skillName.toLowerCase())
+          ) || null;
 
-          // Find the best match: look for skillName in the path
-          skillPath =
-            skillFiles.find((f) =>
-              f.toLowerCase().includes(params.skillName.toLowerCase())
-            ) || null;
+        // If no match by skillName, try the only SKILL.md
+        if (!skillPath && skillFiles.length === 1) {
+          skillPath = skillFiles[0]!;
+        }
 
-          // If no match by skillName, try first SKILL.md
-          if (!skillPath && skillFiles.length === 1) {
-            skillPath = skillFiles[0]!;
-          }
-
-          if (!skillPath && skillFiles.length > 1) {
-            return {
-              content: [
-                {
-                  type: "text" as const,
-                  text: `❌ **Skill Not Found**: Could not find SKILL.md matching "${params.skillName}".\n\n**Available SKILL.md files in this repo:**\n${skillFiles.map((f) => `- ${f}`).join("\n")}\n\n💡 **Tip**: Use a more specific skillName that matches part of the path.`,
-                },
-              ],
-            };
-          }
-        } catch (lsError) {
-          const errorDetails = getErrorDetails(lsError);
+        if (!skillPath && skillFiles.length > 1) {
           return {
             content: [
               {
                 type: "text" as const,
-                text: `❌ **List Failed**\n\nError:\n${errorDetails.stderr || errorDetails.message}`,
+                text: `❌ **Skill Not Found**: Could not find SKILL.md matching "${params.skillName}".\n\n**Available SKILL.md files in this repo:**\n${skillFiles.map((f) => `- ${f}`).join("\n")}\n\n💡 **Tip**: Use a more specific skillName that matches part of the path.`,
               },
             ],
           };
@@ -686,55 +853,56 @@ Examples:
           };
         }
 
-        // Step 3: Read SKILL.md content via git show (no checkout needed)
-        let skillContent: string;
-        try {
-          const { stdout } = await execFileAsync(
-            "git",
-            ["show", `HEAD:${skillPath}`],
-            { cwd: tempDir, timeout: TIMEOUTS.GIT_SHOW, maxBuffer: 1024 * 1024 }
-          );
-          skillContent = stdout;
-        } catch (readError) {
-          const errorDetails = getErrorDetails(readError);
+        // Step 3: Read SKILL.md content via GitHub Contents API
+        const { content: skillContent, error: readError } =
+          await fetchGitHubFileContent(params.repo, skillPath);
+        if (readError || !skillContent) {
           return {
             content: [
               {
                 type: "text" as const,
-                text: `❌ **Read Failed**\n\nPath: ${skillPath}\nError:\n${errorDetails.stderr || errorDetails.message}`,
+                text: `❌ **Read Failed**\n\nPath: ${skillPath}\nError:\n${readError || "Empty file"}`,
               },
             ],
           };
         }
 
-        // Step 4: Automatically scan via Cisco Skill Scanner API
+        // Step 4: Optionally scan via Cisco Skill Scanner API (/scan-upload)
         let scanResult: ScanResult | undefined;
         if (params.enableScan) {
           try {
             // Determine skill directory from the resolved SKILL.md path
-            const skillDirRelative = skillPath.includes("/")
-              ? skillPath.substring(0, skillPath.lastIndexOf("/"))
-              : ".";
+            const skillDirPrefix = skillPath.includes("/")
+              ? skillPath.substring(0, skillPath.lastIndexOf("/") + 1)
+              : "";
 
-            // Checkout only the skill directory so scanner has files on disk
-            await execFileAsync(
-              "git",
-              ["checkout", "HEAD", "--", skillDirRelative],
-              { cwd: tempDir, timeout: TIMEOUTS.GIT_SHOW }
+            // Collect all files under the skill directory
+            const skillFilePaths = treeItems
+              .map((item) => item.path)
+              .filter((p) => p.startsWith(skillDirPrefix));
+
+            // Fetch file contents in parallel via GitHub API
+            const fileBuffers = await fetchGitHubFiles(
+              params.repo,
+              skillFilePaths
             );
 
-            const skillDirAbsolute =
-              skillDirRelative === "."
-                ? tempDir
-                : join(tempDir, skillDirRelative);
+            // Re-key paths relative to skill directory for the ZIP
+            const relativeFiles = new Map<string, Buffer>();
+            for (const [fullPath, buf] of fileBuffers) {
+              const relativePath = skillDirPrefix
+                ? fullPath.slice(skillDirPrefix.length)
+                : fullPath;
+              relativeFiles.set(relativePath, buf);
+            }
 
-            scanResult = await runSkillScanner(skillDirAbsolute);
-          } catch (scanSetupError) {
-            const details = getErrorDetails(scanSetupError);
+            scanResult = await runSkillScanner(relativeFiles);
+          } catch (scanError) {
+            const details = getErrorDetails(scanError);
             scanResult = {
               available: true,
               status: "ERROR",
-              error: `Failed to checkout skill files for scanning: ${details.message}`,
+              error: `Failed to prepare skill files for scanning: ${details.message}`,
             };
           }
         }
@@ -760,9 +928,6 @@ Examples:
             },
           ],
         };
-      } finally {
-        // Always clean up temp dir
-        await rm(tempDir, { recursive: true, force: true }).catch(() => {});
       }
     }
   );

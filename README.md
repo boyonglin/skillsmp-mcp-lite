@@ -6,6 +6,8 @@ A lightweight MCP server that enables AI assistants to search for skills from [S
 
 - **Keyword Search**: Search skills using specific keywords like "PDF", "web scraper", "SEO"
 - **AI Semantic Search**: Find skills using natural language descriptions powered by Cloudflare AI
+- **Read Skill**: Fetch skill content directly from GitHub via the REST API — fully online, no `git clone` or local files
+- **Security Scanning**: Automatic Cisco Skill Scanner analysis via ZIP upload — zero disk writes
 
 ## Quick Setup
 
@@ -83,9 +85,14 @@ Get your API key from: https://skillsmp.com/docs/api
 
 Security scanning is available when the required tooling is installed — no extra configuration is needed. When `skillsmp_read_skill` is called with `enableScan: true`, the server will:
 
-1. **Auto-start** a local `skill-scanner-api` server via `uvx` on a configurable port (default 8000)
-2. **Reuse** that server for all subsequent scans (no cold-start overhead)
-3. **Shut down** the server automatically when the MCP server exits
+1. **Fetch** skill files from GitHub via the REST API (no `git clone`, no local files)
+2. **Build** an in-memory ZIP archive of the skill directory
+3. **Upload** the ZIP to the Cisco Skill Scanner API (`/scan-upload` endpoint)
+4. **Auto-start** a local `skill-scanner-api` server via `uvx` on a configurable port (default 8000) if none is running
+5. **Reuse** that server for all subsequent scans (no cold-start overhead)
+6. **Shut down** the server automatically when the MCP server exits
+
+The entire read-and-scan flow is fully online with **zero disk writes** — no temporary directories are created.
 
 **Prerequisite**: [uv](https://docs.astral.sh/uv/getting-started/installation/) must be installed (provides `uvx`). If `uvx` is not found, scan requests are skipped and the server continues to function normally — you may see a non-fatal warning. Scanning is enabled by default (`enableScan` defaults to `true`).
 
@@ -122,7 +129,7 @@ AI semantic search for skills using natural language.
 
 ### `skillsmp_read_skill`
 
-Read a skill's content directly from a GitHub repository.
+Read a skill's content directly from a GitHub repository (via GitHub API, fully online — no local clone).
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
