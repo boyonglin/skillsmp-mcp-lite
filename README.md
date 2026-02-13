@@ -79,22 +79,15 @@ Get your API key from: https://skillsmp.com/docs/api
 
 > **Note**: The API key is required. The server will exit if `SKILLSMP_API_KEY` is not set.
 
-## Environment Variables
+### Skill Scanner
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `SKILLSMP_API_KEY` | Yes | Your SkillsMP API key |
-| `SKILL_SCANNER_API_URL` | No | URL of an external [Cisco Skill Scanner API](https://github.com/cisco/skill-scanner) server. Only needed if you want to point to a specific server — otherwise the auto-managed server is used. |
+Security scanning is available when the required tooling is installed — no extra configuration is needed. When `skillsmp_read_skill` is called with `enableScan: true`, the server will:
 
-### Skill Scanner (Automatic)
-
-Security scanning is fully automatic — no manual setup required. When `skillsmp_read_skill` runs a scan, the server will:
-
-1. **Auto-start** a local `skill-scanner-api` server via `uvx` on port 8000
+1. **Auto-start** a local `skill-scanner-api` server via `uvx` on a configurable port (default 8000)
 2. **Reuse** that server for all subsequent scans (no cold-start overhead)
 3. **Shut down** the server automatically when the MCP server exits
 
-**Prerequisite**: [uv](https://docs.astral.sh/uv/getting-started/installation/) must be installed (provides `uvx`). If `uvx` is not found, scans are skipped gracefully.
+**Prerequisite**: [uv](https://docs.astral.sh/uv/getting-started/installation/) must be installed (provides `uvx`). If `uvx` is not found, scan requests are skipped and the server continues to function normally — you may see a non-fatal warning. Scanning is enabled by default (`enableScan` defaults to `true`).
 
 You can also manage the server manually if preferred:
 
@@ -135,6 +128,7 @@ Read a skill's content directly from a GitHub repository.
 |-----------|------|----------|-------------|
 | `repo` | string | Yes | GitHub repository in 'owner/repo' format |
 | `skillName` | string | Yes | Name of the skill to read |
+| `enableScan` | boolean | No | Run Cisco Skill Scanner security scan (default: true, requires uv) |
 
 ## Usage Examples
 

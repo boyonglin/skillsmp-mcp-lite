@@ -203,7 +203,7 @@ export class ApiRequestError extends Error {
 // Error Handler
 export function handleApiError(error: unknown): string {
   if (error instanceof ApiStructureError) {
-    return `⚠️ API Structure Error: ${error.message}\n\nThis likely means the SkillsMP API has changed. Please report this issue.`;
+    return `API Structure Error: ${error.message}\n\nThis likely means the SkillsMP API has changed. Please report this issue.`;
   }
   if (error instanceof ApiRequestError) {
     if (error.statusCode === 401) {

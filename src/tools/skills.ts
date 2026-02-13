@@ -32,9 +32,16 @@ const TIMEOUTS = {
   API_STARTUP: 30_000,
 } as const;
 
+// Buffer size for git operations (10 MB)
+const MAX_GIT_BUFFER = 10 * 1024 * 1024;
+
 // Skill Scanner API configuration
 const SKILL_SCANNER_API_URL = process.env.SKILL_SCANNER_API_URL || "";
-const SCANNER_API_PORT = 8000;
+const SCANNER_API_PORT = Number.isFinite(
+  Number.parseInt(process.env.SKILL_SCANNER_API_PORT || "", 10)
+)
+  ? Number.parseInt(process.env.SKILL_SCANNER_API_PORT as string, 10)
+  : 8000;
 const MANAGED_API_URL = `http://localhost:${SCANNER_API_PORT}`;
 
 // ── Managed scanner API server lifecycle ──────────────────────────────────────
@@ -81,7 +88,12 @@ async function ensureScannerApi(): Promise<string> {
   }
 
   // 2. Already running managed server
-  if (managedApiReady && managedApiProcess && !managedApiProcess.killed) {
+  if (
+    managedApiReady &&
+    managedApiProcess &&
+    !managedApiProcess.killed &&
+    managedApiProcess.exitCode === null
+  ) {
     if (await isApiHealthy(MANAGED_API_URL)) return MANAGED_API_URL;
     // Process is running but not healthy — kill before restarting
     managedApiProcess.kill();
@@ -92,7 +104,7 @@ async function ensureScannerApi(): Promise<string> {
   // 3. Deduplicate concurrent startup attempts
   if (managedApiStarting) {
     const ok = await managedApiStarting;
-    return ok ? MANAGED_API_URL : "";
+    return ok && managedApiReady ? MANAGED_API_URL : "";
   }
 
   // 4. Check if something is already listening on the port (e.g. user started it manually)
@@ -131,14 +143,21 @@ async function ensureScannerApi(): Promise<string> {
           String(SCANNER_API_PORT),
         ],
         {
-          stdio: "ignore",
-          detached: false,
+          // Ignore stdin and stdout, but pipe stderr so we can log errors.
+          stdio: ["ignore", "ignore", "pipe"],
           // On Windows spawn needs shell:true for uvx (.cmd)
           shell: process.platform === "win32",
         }
       );
 
-      child.unref();
+      if (child.stderr) {
+        child.stderr.on("data", (data: Buffer) => {
+          const message = data.toString().trim();
+          if (message) {
+            console.error(`[Skill Scanner API stderr] ${message}`);
+          }
+        });
+      }
 
       child.on("exit", (code) => {
         console.error(`Skill Scanner API process exited (code ${code})`);
@@ -174,6 +193,9 @@ async function ensureScannerApi(): Promise<string> {
       console.error(`Failed to auto-start Skill Scanner API: ${msg}`);
       return false;
     } finally {
+      // Clear the lock only after managedApiReady is set above, preventing a
+      // window where another caller could slip through step 3 before state is
+      // consistent.
       managedApiStarting = null;
     }
   })();
@@ -187,13 +209,24 @@ function shutdownManagedApi() {
     if (process.platform === "win32" && managedApiProcess.pid) {
       // On Windows, kill the entire process tree to avoid orphaned children
       try {
-        spawnSync("taskkill", [
+        const result = spawnSync("taskkill", [
           "/F",
           "/T",
           "/PID",
           String(managedApiProcess.pid),
         ]);
-      } catch {
+        if (result.error || result.status !== 0) {
+          console.error(
+            "Failed to terminate managed API process tree via taskkill; falling back to process.kill().",
+            result.error ?? `Exit code: ${result.status}`
+          );
+          managedApiProcess.kill();
+        }
+      } catch (error) {
+        console.error(
+          "Error while attempting to terminate managed API process tree via taskkill; falling back to process.kill().",
+          error
+        );
         managedApiProcess.kill();
       }
     } else {
@@ -204,20 +237,17 @@ function shutdownManagedApi() {
   }
 }
 
-// Clean up on process exit
+// Clean up on process exit — SIGINT/SIGTERM call process.exit(), which
+// triggers the "exit" event where the actual cleanup runs.
 process.on("exit", shutdownManagedApi);
-process.on("SIGINT", () => {
-  shutdownManagedApi();
-  process.exit(0);
-});
-process.on("SIGTERM", () => {
-  shutdownManagedApi();
-  process.exit(0);
-});
+process.on("SIGINT", () => process.exit(0));
+process.on("SIGTERM", () => process.exit(0));
+
+type ScanStatus = "SAFE" | "UNSAFE" | "ERROR";
 
 interface ScanResult {
   available: boolean;
-  status?: string;
+  status?: ScanStatus;
   maxSeverity?: string;
   totalFindings?: number;
   findings?: Array<{
@@ -419,12 +449,6 @@ Examples:
 
         return {
           content: [{ type: "text" as const, text: output }],
-          structuredContent: {
-            query: params.query,
-            count: skills.length,
-            skills: skills,
-            pagination: pagination,
-          },
         };
       } catch (error) {
         return {
@@ -504,11 +528,6 @@ Examples:
 
         return {
           content: [{ type: "text" as const, text: output }],
-          structuredContent: {
-            query: params.query,
-            count: skills.length,
-            skills: skills,
-          },
         };
       } catch (error) {
         return {
@@ -597,7 +616,7 @@ Examples:
             {
               cwd: tempDir,
               timeout: TIMEOUTS.GIT_SHOW,
-              maxBuffer: 10 * 1024 * 1024,
+              maxBuffer: MAX_GIT_BUFFER,
             }
           );
           let skillFiles = stdout
@@ -612,7 +631,7 @@ Examples:
               {
                 cwd: tempDir,
                 timeout: TIMEOUTS.GIT_SHOW,
-                maxBuffer: 10 * 1024 * 1024, // 10MB — sufficient for skill repos
+                maxBuffer: MAX_GIT_BUFFER, // 10MB — sufficient for skill repos
               }
             );
             skillFiles = fullStdout
@@ -631,7 +650,7 @@ Examples:
 
           // If no match by skillName, try first SKILL.md
           if (!skillPath && skillFiles.length === 1) {
-            skillPath = skillFiles[0];
+            skillPath = skillFiles[0]!;
           }
 
           if (!skillPath && skillFiles.length > 1) {
@@ -714,7 +733,7 @@ Examples:
             const details = getErrorDetails(scanSetupError);
             scanResult = {
               available: true,
-              status: "CHECKOUT_ERROR",
+              status: "ERROR",
               error: `Failed to checkout skill files for scanning: ${details.message}`,
             };
           }
@@ -731,13 +750,6 @@ Examples:
 
         return {
           content: [{ type: "text" as const, text: output }],
-          structuredContent: {
-            repo: params.repo,
-            skillName: params.skillName,
-            skillContent: skillContent,
-            resolvedPath: skillPath,
-            scanResult: scanResult,
-          },
         };
       } catch (error) {
         return {
@@ -861,10 +873,7 @@ function formatReadSkillResponse(
 
     if (!scanResult.available) {
       lines.push(`⚠️ **Scanner not available**: ${scanResult.error}`);
-    } else if (
-      scanResult.status === "ERROR" ||
-      scanResult.status === "CHECKOUT_ERROR"
-    ) {
+    } else if (scanResult.status === "ERROR") {
       lines.push(`❌ **Scan error**: ${scanResult.error}`);
     } else {
       const isSafe =
@@ -903,9 +912,17 @@ function formatReadSkillResponse(
     );
   }
 
-  lines.push("");
-  lines.push("---");
-  lines.push("");
+  const contentStartsWithFrontmatter = skillContent
+    .trimStart()
+    .startsWith("---");
+
+  if (!contentStartsWithFrontmatter) {
+    lines.push("");
+    lines.push("---");
+    lines.push("");
+  } else {
+    lines.push("");
+  }
   lines.push(skillContent);
 
   return lines.join("\n");
