@@ -59,14 +59,28 @@ export const ReadSkillSchema = z
     repo: z
       .string()
       .min(1, "Repository is required")
-      .regex(/^[^/]+\/[^/]+$/, "Repository must be in 'owner/repo' format")
+      .regex(
+        /^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/,
+        "Repository must be in 'owner/repo' format (alphanumeric, dots, hyphens, underscores only)"
+      )
       .describe(
         "GitHub repository in 'owner/repo' format (e.g., 'existential-birds/beagle')"
       ),
     skillName: z
       .string()
       .min(1, "Skill name is required")
+      .max(100, "Skill name must not exceed 100 characters")
+      .regex(
+        /^[a-zA-Z0-9_-]+$/,
+        "Skill name must contain only alphanumeric characters, hyphens, and underscores"
+      )
       .describe("Name of the skill to read"),
+    enableScan: z
+      .boolean()
+      .default(true)
+      .describe(
+        "Run Cisco Skill Scanner security scan automatically (requires uv installed). Default: true"
+      ),
   })
   .strict();
 

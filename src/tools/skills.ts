@@ -1,5 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { execFile } from "child_process";
+import { execFile, spawn, spawnSync, type ChildProcess } from "child_process";
 import { promisify } from "util";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -27,11 +27,210 @@ const execFileAsync = promisify(execFile);
 const TIMEOUTS = {
   GIT_CLONE: 60_000,
   GIT_SHOW: 15_000,
+  SKILL_SCAN_API: 60_000,
+  API_HEALTH_POLL: 500,
+  API_STARTUP: 30_000,
 } as const;
 
-/**
- * Safely extract error message from unknown error type
- */
+// Skill Scanner API configuration
+const SKILL_SCANNER_API_URL = process.env.SKILL_SCANNER_API_URL || "";
+const SCANNER_API_PORT = 8000;
+const MANAGED_API_URL = `http://localhost:${SCANNER_API_PORT}`;
+
+// ── Managed scanner API server lifecycle ──────────────────────────────────────
+
+let managedApiProcess: ChildProcess | null = null;
+let managedApiReady = false;
+let managedApiStarting: Promise<boolean> | null = null;
+
+async function isApiHealthy(apiUrl: string): Promise<boolean> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 3_000);
+  try {
+    const res = await fetch(`${apiUrl.replace(/\/$/, "")}/health`, {
+      signal: controller.signal,
+    });
+    return res.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function waitForApiReady(
+  apiUrl: string,
+  timeoutMs: number
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await isApiHealthy(apiUrl)) return true;
+    await new Promise((r) => setTimeout(r, TIMEOUTS.API_HEALTH_POLL));
+  }
+  return false;
+}
+
+async function ensureScannerApi(): Promise<string> {
+  // 1. User-configured external URL
+  if (SKILL_SCANNER_API_URL) {
+    if (await isApiHealthy(SKILL_SCANNER_API_URL)) return SKILL_SCANNER_API_URL;
+    console.error(
+      `Skill Scanner API at ${SKILL_SCANNER_API_URL} is not healthy`
+    );
+    return "";
+  }
+
+  // 2. Already running managed server
+  if (managedApiReady && managedApiProcess && !managedApiProcess.killed) {
+    if (await isApiHealthy(MANAGED_API_URL)) return MANAGED_API_URL;
+    // Process is running but not healthy — kill before restarting
+    managedApiProcess.kill();
+    managedApiReady = false;
+    managedApiProcess = null;
+  }
+
+  // 3. Deduplicate concurrent startup attempts
+  if (managedApiStarting) {
+    const ok = await managedApiStarting;
+    return ok ? MANAGED_API_URL : "";
+  }
+
+  // 4. Check if something is already listening on the port (e.g. user started it manually)
+  if (await isApiHealthy(MANAGED_API_URL)) {
+    managedApiReady = true;
+    return MANAGED_API_URL;
+  }
+
+  // 5. Auto-start via uvx
+  managedApiStarting = (async () => {
+    try {
+      console.error("Auto-starting Skill Scanner API server via uvx...");
+
+      // Pre-check: is uvx available?
+      try {
+        await execFileAsync(
+          process.platform === "win32" ? "where" : "which",
+          ["uvx"],
+          { timeout: 5_000 }
+        );
+      } catch {
+        console.error(
+          "uvx is not installed. Security scanning is disabled. " +
+            "Install uv to enable: https://docs.astral.sh/uv/getting-started/installation/"
+        );
+        return false;
+      }
+
+      const child = spawn(
+        "uvx",
+        [
+          "--from",
+          "cisco-ai-skill-scanner",
+          "skill-scanner-api",
+          "--port",
+          String(SCANNER_API_PORT),
+        ],
+        {
+          stdio: "ignore",
+          detached: false,
+          // On Windows spawn needs shell:true for uvx (.cmd)
+          shell: process.platform === "win32",
+        }
+      );
+
+      child.unref();
+
+      child.on("exit", (code) => {
+        console.error(`Skill Scanner API process exited (code ${code})`);
+        managedApiReady = false;
+        managedApiProcess = null;
+      });
+
+      child.on("error", (err) => {
+        console.error(`Skill Scanner API process error: ${err.message}`);
+        managedApiReady = false;
+        managedApiProcess = null;
+      });
+
+      managedApiProcess = child;
+
+      const ready = await waitForApiReady(
+        MANAGED_API_URL,
+        TIMEOUTS.API_STARTUP
+      );
+      if (ready) {
+        managedApiReady = true;
+        console.error(`Skill Scanner API server ready at ${MANAGED_API_URL}`);
+        return true;
+      }
+
+      // Startup timed out — kill the process
+      console.error("Skill Scanner API server failed to start within timeout");
+      child.kill();
+      managedApiProcess = null;
+      return false;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Failed to auto-start Skill Scanner API: ${msg}`);
+      return false;
+    } finally {
+      managedApiStarting = null;
+    }
+  })();
+
+  const ok = await managedApiStarting;
+  return ok ? MANAGED_API_URL : "";
+}
+
+function shutdownManagedApi() {
+  if (managedApiProcess && !managedApiProcess.killed) {
+    if (process.platform === "win32" && managedApiProcess.pid) {
+      // On Windows, kill the entire process tree to avoid orphaned children
+      try {
+        spawnSync("taskkill", [
+          "/F",
+          "/T",
+          "/PID",
+          String(managedApiProcess.pid),
+        ]);
+      } catch {
+        managedApiProcess.kill();
+      }
+    } else {
+      managedApiProcess.kill();
+    }
+    managedApiProcess = null;
+    managedApiReady = false;
+  }
+}
+
+// Clean up on process exit
+process.on("exit", shutdownManagedApi);
+process.on("SIGINT", () => {
+  shutdownManagedApi();
+  process.exit(0);
+});
+process.on("SIGTERM", () => {
+  shutdownManagedApi();
+  process.exit(0);
+});
+
+interface ScanResult {
+  available: boolean;
+  status?: string;
+  maxSeverity?: string;
+  totalFindings?: number;
+  findings?: Array<{
+    rule_id?: string;
+    severity?: string;
+    description?: string;
+    file_path?: string;
+    analyzer?: string;
+  }>;
+  scanDuration?: string;
+  error?: string;
+}
+
 function getErrorDetails(error: unknown): { message: string; stderr?: string } {
   if (error instanceof Error) {
     const execError = error as Error & { stderr?: string; stdout?: string };
@@ -48,6 +247,103 @@ function getErrorDetails(error: unknown): { message: string; stderr?: string } {
     };
   }
   return { message: String(error) };
+}
+
+async function runSkillScannerApi(
+  skillDir: string,
+  apiUrl: string
+): Promise<ScanResult> {
+  const scanUrl = `${apiUrl.replace(/\/$/, "")}/scan`;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    TIMEOUTS.SKILL_SCAN_API
+  );
+
+  try {
+    const response = await fetch(scanUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ skill_directory: skillDir }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text().catch(() => "");
+      return {
+        available: true,
+        status: "ERROR",
+        error: `API returned ${response.status}: ${errorBody}`,
+      };
+    }
+
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = (await response.json()) as Record<string, unknown>;
+    } catch {
+      return {
+        available: true,
+        status: "ERROR",
+        error: `Skill Scanner API returned invalid JSON from ${scanUrl}`,
+      };
+    }
+
+    const findings = Array.isArray(parsed.findings) ? parsed.findings : [];
+    return {
+      available: true,
+      status: parsed.is_safe === true ? "SAFE" : "UNSAFE",
+      maxSeverity: String(parsed.max_severity || "UNKNOWN"),
+      totalFindings:
+        typeof parsed.findings_count === "number"
+          ? parsed.findings_count
+          : findings.length,
+      findings: findings.map((f: Record<string, unknown>) => ({
+        rule_id: String(f.rule_id || f.ruleId || ""),
+        severity: String(f.severity || ""),
+        description: String(f.description || f.message || ""),
+        file_path: String(f.file_path || f.filePath || ""),
+        analyzer: String(f.analyzer || ""),
+      })),
+      scanDuration:
+        typeof parsed.scan_duration_seconds === "number"
+          ? `${parsed.scan_duration_seconds}s`
+          : undefined,
+    };
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      return {
+        available: true,
+        status: "ERROR",
+        error: "Skill Scanner API request timed out",
+      };
+    }
+    const details = getErrorDetails(error);
+    return {
+      available: false,
+      error: `Skill Scanner API unreachable at ${apiUrl}: ${details.message}`,
+    };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function runSkillScanner(skillDir: string): Promise<ScanResult> {
+  const apiUrl = await ensureScannerApi();
+
+  if (!apiUrl) {
+    return {
+      available: false,
+      error:
+        "Security scanner not available — uvx is not installed.\n" +
+        "Install uv to enable automatic security scanning:\n" +
+        "  macOS/Linux: curl -LsSf https://astral.sh/uv/install.sh | sh\n" +
+        '  Windows: powershell -c "irm https://astral.sh/uv/install.ps1 | iex"\n' +
+        "Skill content was still read successfully.",
+    };
+  }
+
+  return runSkillScannerApi(skillDir, apiUrl);
 }
 
 /**
@@ -90,10 +386,10 @@ Examples:
       try {
         const queryParams: Record<string, string | number> = {
           q: params.query,
+          page: params.page,
+          limit: params.limit,
         };
 
-        if (params.page) queryParams.page = params.page;
-        if (params.limit) queryParams.limit = params.limit;
         if (params.sortBy) queryParams.sortBy = params.sortBy;
 
         const rawData = await makeApiRequest<unknown>(
@@ -232,22 +528,23 @@ Examples:
     "skillsmp_read_skill",
     {
       title: "Read Skill",
-      description: `Read a skill's content directly from a GitHub repository.
+      description: `Read a skill's content directly from a GitHub repository and automatically run Cisco Skill Scanner security analysis.
 
-This tool fetches the SKILL.md content from a GitHub repo without checking out files to disk, avoiding antivirus and Windows path issues.
+This tool fetches the SKILL.md content from a GitHub repo, then automatically starts a local Skill Scanner API server (via uvx) to detect prompt injection, data exfiltration, and malicious code patterns. The server is reused across scans for fast performance. The skill is NOT installed — only read and scanned.
 
-**IMPORTANT**: Use this to quickly load skill instructions without manual steps.
+**IMPORTANT**: Use this to quickly load skill instructions and verify safety without manual steps.
 
 Args:
   - repo (string, required): GitHub repository in 'owner/repo' format
   - skillName (string, required): Name of the skill to read
+  - enableScan (boolean, optional): Run security scan (default: true, requires uv)
 
 Returns:
-  The full content of the skill's instructions (SKILL.md).
+  The full content of the skill's instructions (SKILL.md) with security scan results.
 
 Examples:
   - repo: "existential-birds/beagle", skillName: "python-code-review"
-  - repo: "LA3D/skillhelper", skillName: "code-reviewer"`,
+  - repo: "LA3D/skillhelper", skillName: "code-reviewer", enableScan: false`,
       inputSchema: ReadSkillSchema,
       annotations: {
         readOnlyHint: true,
@@ -315,7 +612,7 @@ Examples:
               {
                 cwd: tempDir,
                 timeout: TIMEOUTS.GIT_SHOW,
-                maxBuffer: 50 * 1024 * 1024,
+                maxBuffer: 10 * 1024 * 1024, // 10MB — sufficient for skill repos
               }
             );
             skillFiles = fullStdout
@@ -391,11 +688,45 @@ Examples:
           };
         }
 
+        // Step 4: Automatically scan via Cisco Skill Scanner API
+        let scanResult: ScanResult | undefined;
+        if (params.enableScan) {
+          try {
+            // Determine skill directory from the resolved SKILL.md path
+            const skillDirRelative = skillPath.includes("/")
+              ? skillPath.substring(0, skillPath.lastIndexOf("/"))
+              : ".";
+
+            // Checkout only the skill directory so scanner has files on disk
+            await execFileAsync(
+              "git",
+              ["checkout", "HEAD", "--", skillDirRelative],
+              { cwd: tempDir, timeout: TIMEOUTS.GIT_SHOW }
+            );
+
+            const skillDirAbsolute =
+              skillDirRelative === "."
+                ? tempDir
+                : join(tempDir, skillDirRelative);
+
+            scanResult = await runSkillScanner(skillDirAbsolute);
+          } catch (scanSetupError) {
+            const details = getErrorDetails(scanSetupError);
+            scanResult = {
+              available: true,
+              status: "CHECKOUT_ERROR",
+              error: `Failed to checkout skill files for scanning: ${details.message}`,
+            };
+          }
+        }
+
         const output = formatReadSkillResponse(
           params.repo,
           params.skillName,
           skillContent,
-          skillPath
+          skillPath,
+          scanResult,
+          params.enableScan
         );
 
         return {
@@ -405,6 +736,7 @@ Examples:
             skillName: params.skillName,
             skillContent: skillContent,
             resolvedPath: skillPath,
+            scanResult: scanResult,
           },
         };
       } catch (error) {
@@ -426,9 +758,6 @@ Examples:
 
 type SkillWithScore = Skill & { score?: number };
 
-/**
- * Render a single skill as markdown lines
- */
 function renderSkill(skill: SkillWithScore, index?: number): string[] {
   const lines: string[] = [];
 
@@ -462,9 +791,6 @@ function renderSkill(skill: SkillWithScore, index?: number): string[] {
   return lines;
 }
 
-/**
- * Format skills search response as markdown
- */
 function formatSkillsResponse(
   skills: Skill[],
   query: string,
@@ -477,7 +803,7 @@ function formatSkillsResponse(
     "",
   ];
 
-  skills.forEach((skill) => lines.push(...renderSkill(skill)));
+  skills.forEach((skill, i) => lines.push(...renderSkill(skill, i)));
 
   if (pagination?.hasNext) {
     lines.push(
@@ -488,9 +814,6 @@ function formatSkillsResponse(
   return lines.join("\n");
 }
 
-/**
- * Format AI search response as markdown
- */
 function formatAISearchResponse(
   skills: SkillWithScore[],
   query: string
@@ -513,25 +836,77 @@ function formatAISearchResponse(
   return lines.join("\n");
 }
 
-/**
- * Format read skill response as markdown
- */
 function formatReadSkillResponse(
   repo: string,
   skillName: string,
   skillContent: string,
-  resolvedPath: string
+  resolvedPath: string,
+  scanResult?: ScanResult,
+  enableScan?: boolean
 ): string {
   const lines: string[] = [
     `# 📖 Skill Read: ${skillName}`,
     "",
     `**Repository**: ${repo}`,
     `**Path**: ${resolvedPath}`,
-    "",
-    "---",
-    "",
-    skillContent,
   ];
+
+  // Append scan results if available
+  if (scanResult) {
+    lines.push("");
+    lines.push("---");
+    lines.push("");
+    lines.push("## 🔒 Cisco Skill Scanner Results");
+    lines.push("");
+
+    if (!scanResult.available) {
+      lines.push(`⚠️ **Scanner not available**: ${scanResult.error}`);
+    } else if (
+      scanResult.status === "ERROR" ||
+      scanResult.status === "CHECKOUT_ERROR"
+    ) {
+      lines.push(`❌ **Scan error**: ${scanResult.error}`);
+    } else {
+      const isSafe =
+        scanResult.status === "SAFE" || scanResult.totalFindings === 0;
+      lines.push(
+        `**Status**: ${isSafe ? "✅ SAFE" : `⚠️ ${scanResult.maxSeverity || "UNKNOWN"}`}`
+      );
+      lines.push(`**Findings**: ${scanResult.totalFindings ?? 0}`);
+      if (scanResult.scanDuration) {
+        lines.push(`**Scan Duration**: ${scanResult.scanDuration}`);
+      }
+
+      if (scanResult.findings && scanResult.findings.length > 0) {
+        lines.push("");
+        lines.push("### Findings");
+        lines.push("");
+        for (const f of scanResult.findings) {
+          const severity = f.severity ? `[${f.severity}]` : "";
+          const rule = f.rule_id || "unknown-rule";
+          const desc = f.description || "No description";
+          const analyzer = f.analyzer ? ` (${f.analyzer})` : "";
+          const filePath = f.file_path ? ` — ${f.file_path}` : "";
+          lines.push(`- **${severity} ${rule}**${analyzer}${filePath}`);
+          lines.push(`  ${desc}`);
+        }
+      }
+    }
+  } else if (enableScan === false) {
+    lines.push("");
+    lines.push("---");
+    lines.push("");
+    lines.push("## 🔒 Security Scan");
+    lines.push("");
+    lines.push(
+      "⚠️ **Security scanning is disabled**. This skill content has not been verified for safety. Use `enableScan: true` to enable automatic security analysis."
+    );
+  }
+
+  lines.push("");
+  lines.push("---");
+  lines.push("");
+  lines.push(skillContent);
 
   return lines.join("\n");
 }
