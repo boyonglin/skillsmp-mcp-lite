@@ -5,7 +5,7 @@ import { z } from "zod";
  */
 
 // Sort options enum
-export enum SortBy {
+enum SortBy {
   STARS = "stars",
   RECENT = "recent",
 }

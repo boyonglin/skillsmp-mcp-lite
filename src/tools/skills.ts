@@ -236,7 +236,7 @@ Examples:
         const { items: treeItems, error: treeError } = await fetchGitHubTree(
           params.repo
         );
-        if (treeError || !treeItems.length) {
+        if (!treeItems.length) {
           return {
             content: [
               {
@@ -245,6 +245,9 @@ Examples:
               },
             ],
           };
+        }
+        if (treeError) {
+          console.error(`[ReadSkill] ${treeError}`);
         }
 
         // Step 2: Find SKILL.md matching the skillName
@@ -306,10 +309,19 @@ Examples:
               ? skillPath.substring(0, skillPath.lastIndexOf("/") + 1)
               : "";
 
-            const skillDirItems = treeItems.filter(
-              (item) =>
-                item.type === "blob" && item.path.startsWith(skillDirPrefix)
-            );
+            const skillDirItems = treeItems
+              .filter(
+                (item) =>
+                  item.type === "blob" && item.path.startsWith(skillDirPrefix)
+              )
+              .sort((a, b) => {
+                const aIsSkill =
+                  a.path.endsWith("/SKILL.md") || a.path === "SKILL.md" ? 0 : 1;
+                const bIsSkill =
+                  b.path.endsWith("/SKILL.md") || b.path === "SKILL.md" ? 0 : 1;
+                if (aIsSkill !== bIsSkill) return aIsSkill - bIsSkill;
+                return (a.size ?? 0) - (b.size ?? 0);
+              });
 
             // Apply three-layer scan limits using GitHub tree size
             let excludedCount = 0;

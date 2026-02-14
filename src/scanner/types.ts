@@ -1,4 +1,4 @@
-export type ScanStatus = "SAFE" | "UNSAFE" | "ERROR";
+type ScanStatus = "SAFE" | "UNSAFE" | "ERROR";
 
 export interface ScanResult {
   available: boolean;

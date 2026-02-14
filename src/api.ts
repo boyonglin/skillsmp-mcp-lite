@@ -3,8 +3,8 @@
  */
 
 // API Configuration
-export const SKILLSMP_API_BASE = "https://skillsmp.com/api/v1";
-export const API_TIMEOUT_MS = 30_000;
+const SKILLSMP_API_BASE = "https://skillsmp.com/api/v1";
+const API_TIMEOUT_MS = 30_000;
 
 // Response Types
 export interface Skill {
@@ -19,7 +19,7 @@ export interface Skill {
   skillUrl?: string;
 }
 
-export interface Pagination {
+interface Pagination {
   page: number;
   limit: number;
   total: number;
@@ -44,7 +44,7 @@ export interface SearchResponse {
   };
 }
 
-export interface AISearchResponse {
+interface AISearchResponse {
   success: boolean;
   data: {
     object: string;
@@ -64,7 +64,7 @@ export interface AISearchResponse {
   };
 }
 
-export interface ApiError {
+interface ApiError {
   success: false;
   error: {
     code: string;
@@ -180,7 +180,7 @@ export function validateAISearchResponse(
 /**
  * Custom error for API structure changes
  */
-export class ApiStructureError extends Error {
+class ApiStructureError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "ApiStructureError";
@@ -190,7 +190,7 @@ export class ApiStructureError extends Error {
 /**
  * Custom error for API requests with HTTP status code
  */
-export class ApiRequestError extends Error {
+class ApiRequestError extends Error {
   public readonly statusCode: number;
 
   constructor(message: string, statusCode: number) {

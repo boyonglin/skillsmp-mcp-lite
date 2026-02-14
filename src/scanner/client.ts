@@ -9,30 +9,9 @@ async function runSkillScannerApi(
   files: Map<string, Buffer>,
   apiUrl: string
 ): Promise<ScanResult> {
-  const queryParams = new URLSearchParams();
-  queryParams.set("use_behavioral", "true");
-
-  const llmApiKey = process.env.SKILL_SCANNER_LLM_API_KEY;
-  const llmModel = process.env.SKILL_SCANNER_LLM_MODEL;
-  const llmProvider = process.env.SKILL_SCANNER_LLM_PROVIDER;
-
-  if (llmApiKey) {
-    queryParams.set("use_llm", "true");
-    if (llmModel) {
-      queryParams.set("llm_model", llmModel);
-    }
-    if (llmProvider) {
-      queryParams.set("llm_provider", llmProvider);
-    }
-  }
-
-  const requestedAnalyzers = CORE_ANALYZERS;
-
-  const scanUrl = `${apiUrl.replace(/\/$/, "")}/scan-upload?${queryParams.toString()}`;
+  const scanUrl = `${apiUrl.replace(/\/$/, "")}/scan-upload`;
   console.error(`[Scanner] scan-upload request URL: ${scanUrl}`);
-  console.error(
-    `[Scanner] requested analyzers: ${requestedAnalyzers.join(", ")}`
-  );
+  console.error(`[Scanner] requested analyzers: ${CORE_ANALYZERS.join(", ")}`);
   console.error(`[Scanner] files in zip: ${files.size}`);
 
   const zipBuffer = buildZipBuffer(files);
@@ -50,15 +29,6 @@ async function runSkillScannerApi(
   };
 
   appendFormField("use_behavioral", "true");
-  if (llmApiKey) {
-    appendFormField("use_llm", "true");
-    if (llmModel) {
-      appendFormField("llm_model", llmModel);
-    }
-    if (llmProvider) {
-      appendFormField("llm_provider", llmProvider);
-    }
-  }
 
   // File part
   parts.push(
@@ -124,7 +94,6 @@ async function runSkillScannerApi(
         .map((value) => String(value || ""))
     );
     const executedAnalyzers = uniqueAnalyzers([
-      ...requestedAnalyzers,
       ...analyzersFromResponse,
       ...analyzersFromFindings,
     ]);

@@ -15,7 +15,7 @@ function githubHeaders(): Record<string, string> {
   return headers;
 }
 
-export interface GitHubTreeItem {
+interface GitHubTreeItem {
   path: string;
   type: string;
   sha: string;

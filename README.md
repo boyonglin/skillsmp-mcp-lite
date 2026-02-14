@@ -121,10 +121,7 @@ When `skillsmp_read_skill` is called with `enableScan: true` (the default), the 
    - **Max single file size**: 500 KB per file
    - **Max total size**: 5 MB across all files
 3. Builds an in-memory ZIP archive from accepted files
-4. Uploads the ZIP to the Cisco Skill Scanner API (`/scan-upload`) with **URL query parameters**:
-   - `use_behavioral=true` (always enabled)
-   - `use_llm=true` (only if `SKILL_SCANNER_LLM_API_KEY` is set)
-   - `llm_provider=<provider>` (only if `SKILL_SCANNER_LLM_PROVIDER` is set and no model override)
+4. Uploads the ZIP to the Cisco Skill Scanner API (`/scan-upload`) with `use_behavioral=true`
 5. Auto-starts a local scanner server via `uvx` if none is running (reused for subsequent scans, shut down on exit)
 
 If files are excluded due to scan limits, a **Scan Note** is included in the results showing how many files and bytes were excluded.

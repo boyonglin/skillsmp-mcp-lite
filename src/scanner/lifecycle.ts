@@ -198,7 +198,7 @@ export async function ensureScannerApi(): Promise<string> {
   return ok ? MANAGED_API_URL : "";
 }
 
-export function shutdownManagedApi() {
+function shutdownManagedApi() {
   if (managedApiProcess && !managedApiProcess.killed) {
     if (process.platform === "win32" && managedApiProcess.pid) {
       try {
