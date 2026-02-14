@@ -232,6 +232,8 @@ Examples:
     },
     async (params: ReadSkillInput) => {
       try {
+        const enableScan = params.enableScan !== false;
+
         // Step 1: Fetch the repo file tree via GitHub API
         const { items: treeItems, error: treeError } = await fetchGitHubTree(
           params.repo
@@ -303,7 +305,7 @@ Examples:
         // Step 4: Optionally scan via Cisco Skill Scanner API (/scan-upload)
         let scanResult: ScanResult | undefined;
         let scanNote: string | undefined;
-        if (params.enableScan) {
+        if (enableScan) {
           try {
             const skillDirPrefix = skillPath.includes("/")
               ? skillPath.substring(0, skillPath.lastIndexOf("/") + 1)
@@ -402,7 +404,7 @@ Examples:
           skillContent,
           skillPath,
           scanResult,
-          params.enableScan,
+          enableScan,
           scanNote
         );
 
