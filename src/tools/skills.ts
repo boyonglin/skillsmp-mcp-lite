@@ -30,7 +30,7 @@ import { getErrorMessage } from "../utils.js";
 /** Three-layer scan limits — applied BEFORE downloading files via GitHub tree size */
 const SCAN_LIMITS = {
   /** Maximum number of files to include in a scan */
-  MAX_FILES: 200,
+  MAX_FILES: 100,
   /** Maximum size of a single file in bytes (500 KB) */
   MAX_SINGLE_FILE_BYTES: 500 * 1024,
   /** Maximum total size of all files in bytes (5 MB) */
@@ -41,7 +41,6 @@ const SCAN_LIMITS = {
  * Register SkillsMP tools on the MCP server
  */
 export function registerSkillsTools(server: McpServer, apiKey: string) {
-  // Tool 1: Keyword Search
   server.registerTool(
     "skillsmp_search_skills",
     {
@@ -123,7 +122,6 @@ Examples:
     }
   );
 
-  // Tool 2: AI Semantic Search
   server.registerTool(
     "skillsmp_ai_search_skills",
     {
@@ -200,7 +198,6 @@ Examples:
     }
   );
 
-  // Tool 3: Read Skill
   server.registerTool(
     "skillsmp_read_skill",
     {
@@ -234,7 +231,6 @@ Examples:
       try {
         const enableScan = params.enableScan !== false;
 
-        // Step 1: Fetch the repo file tree via GitHub API
         const { items: treeItems, error: treeError } = await fetchGitHubTree(
           params.repo
         );
@@ -252,7 +248,6 @@ Examples:
           console.error(`[ReadSkill] ${treeError}`);
         }
 
-        // Step 2: Find SKILL.md matching the skillName
         const skillFiles = treeItems
           .map((item) => item.path)
           .filter((p) => p.endsWith("SKILL.md"));
@@ -288,7 +283,6 @@ Examples:
           };
         }
 
-        // Step 3: Read SKILL.md content via GitHub Contents API
         const { content: skillContent, error: readError } =
           await fetchGitHubFileContent(params.repo, skillPath);
         if (readError || !skillContent) {
@@ -302,7 +296,6 @@ Examples:
           };
         }
 
-        // Step 4: Optionally scan via Cisco Skill Scanner API (/scan-upload)
         let scanResult: ScanResult | undefined;
         let scanNote: string | undefined;
         if (enableScan) {

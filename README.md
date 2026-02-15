@@ -117,7 +117,7 @@ When `skillsmp_read_skill` is called with `enableScan: true` (the default), the 
 
 1. Fetches skill files from GitHub via REST API
 2. Applies **three-layer scan limits** using GitHub tree `size` (before downloading):
-   - **Max files**: 200 files per scan
+   - **Max files**: 100 files per scan
    - **Max single file size**: 500 KB per file
    - **Max total size**: 5 MB across all files
 3. Builds an in-memory ZIP archive from accepted files
