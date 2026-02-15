@@ -1,7 +1,6 @@
 import { spawn, spawnSync, type ChildProcess } from "child_process";
-import { existsSync } from "fs";
-import { join } from "path";
 import { getErrorMessage } from "../utils.js";
+import { resolveScannerLauncher } from "./uv-resolver.js";
 
 const API_HEALTH_POLL_MS = 500;
 const API_STARTUP_TIMEOUT_MS = 30_000;
@@ -84,48 +83,20 @@ export async function ensureScannerApi(): Promise<string> {
     try {
       console.error("Auto-starting Skill Scanner API server via uvx...");
 
-      const uvxCommandCandidates: string[] = [];
-      if (process.env.UVX_PATH) {
-        uvxCommandCandidates.push(process.env.UVX_PATH);
-      }
-      uvxCommandCandidates.push("uvx");
+      const launcher = resolveScannerLauncher();
 
-      if (process.platform === "win32" && process.env.USERPROFILE) {
-        const uvxFromLocalBin = join(
-          process.env.USERPROFILE,
-          ".local",
-          "bin",
-          "uvx.exe"
-        );
-        if (existsSync(uvxFromLocalBin)) {
-          uvxCommandCandidates.push(uvxFromLocalBin);
-        }
-      }
-
-      let uvxCommand: string | null = null;
-      for (const candidate of uvxCommandCandidates) {
-        const result = spawnSync(candidate, ["--version"], {
-          timeout: 5_000,
-          stdio: "ignore",
-          shell: false,
-        });
-        if (!result.error && result.status === 0) {
-          uvxCommand = candidate;
-          break;
-        }
-      }
-
-      if (!uvxCommand) {
+      if (!launcher) {
         console.error(
-          "uvx is not installed. Security scanning is disabled. " +
+          "uvx/uv is not installed. Security scanning is disabled. " +
             "Install uv to enable: https://docs.astral.sh/uv/getting-started/installation/"
         );
         return false;
       }
 
       const child = spawn(
-        uvxCommand,
+        launcher.command,
         [
+          ...launcher.preArgs,
           "--from",
           "cisco-ai-skill-scanner",
           "skill-scanner-api",

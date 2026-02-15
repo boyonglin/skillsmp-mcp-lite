@@ -1,6 +1,6 @@
 {
   "name": "skillsmp-mcp-lite",
-  "version": "2.2.1",
+  "version": "2.3.0",
   "description": "Lightweight MCP server for searching AI skills from SkillsMP before starting any task",
   "type": "module",
   "main": "dist/index.js",

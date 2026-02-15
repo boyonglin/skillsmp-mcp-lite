@@ -13,7 +13,7 @@ A lightweight MCP server that enables AI assistants to search and read skills fr
 
 | Requirement | Purpose | Required |
 |---|---|---|
-| Node.js ≥ 18 | Runtime | Yes |
+| Node.js ≥ 20 | Runtime | Yes |
 | [SkillsMP API Key](https://skillsmp.com/docs/api) | Authentication | Yes |
 | [uv](https://docs.astral.sh/uv/getting-started/installation/) (provides `uvx`) | Security scanning | No |
 

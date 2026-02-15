@@ -1,12 +1,4 @@
-import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const spawnMock = vi.fn();
 const spawnSyncMock = vi.fn();
@@ -65,20 +57,24 @@ function createEventfulChildProcess() {
 
 describe("ensureScannerApi", () => {
   const originalEnv = { ...process.env };
-  const originalMaxListeners = process.getMaxListeners();
-
-  beforeAll(() => {
-    process.setMaxListeners(50);
-  });
-
-  afterAll(() => {
-    process.setMaxListeners(originalMaxListeners);
-  });
+  const originalProcessListeners: Record<string, Function[]> = {
+    exit: [...process.listeners("exit")],
+    SIGINT: [...process.listeners("SIGINT")],
+    SIGTERM: [...process.listeners("SIGTERM")],
+  };
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
     vi.resetModules();
     process.env = { ...originalEnv };
+
+    (["exit", "SIGINT", "SIGTERM"] as const).forEach((event) => {
+      process.removeAllListeners(event);
+      for (const listener of originalProcessListeners[event] ?? []) {
+        process.on(event, listener as (...args: unknown[]) => void);
+      }
+    });
   });
 
   it("returns external scanner URL when healthy", async () => {
@@ -135,6 +131,7 @@ describe("ensureScannerApi", () => {
   });
 
   it("auto-starts scanner via uvx and returns managed URL when startup succeeds", async () => {
+    vi.useFakeTimers();
     delete process.env.SKILL_SCANNER_API_URL;
     process.env.SKILL_SCANNER_API_PORT = "8124";
 
@@ -151,13 +148,73 @@ describe("ensureScannerApi", () => {
     spawnMock.mockReturnValue(child);
 
     const { ensureScannerApi } = await import("../src/scanner/lifecycle.js");
-    const url = await ensureScannerApi();
+    const urlPromise = ensureScannerApi();
+
+    await vi.runAllTimersAsync();
+    const url = await urlPromise;
 
     expect(url).toBe("http://localhost:8124");
     expect(spawnMock).toHaveBeenCalledTimes(1);
   });
 
+  it("falls back to uv x when uvx binary is unavailable", async () => {
+    vi.useFakeTimers();
+    delete process.env.SKILL_SCANNER_API_URL;
+    process.env.SKILL_SCANNER_API_PORT = "8131";
+
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(healthOkResponse(false))
+        .mockResolvedValueOnce(healthOkResponse(true))
+    );
+
+    spawnSyncMock.mockImplementation((command: string, args: string[]) => {
+      if (command.includes("uvx")) {
+        return { status: 1, error: new Error("uvx not found") };
+      }
+
+      if ((command === "where" || command === "which") && args[0] === "uvx") {
+        return { status: 1 };
+      }
+
+      if (
+        command.includes("uv") ||
+        ((command === "where" || command === "which") && args[0] === "uv")
+      ) {
+        return { status: 0, stdout: "" };
+      }
+
+      return { status: 0 };
+    });
+
+    const child = createMockChildProcess();
+    spawnMock.mockReturnValue(child);
+
+    const { ensureScannerApi } = await import("../src/scanner/lifecycle.js");
+    const urlPromise = ensureScannerApi();
+
+    await vi.runAllTimersAsync();
+    const url = await urlPromise;
+
+    expect(url).toBe("http://localhost:8131");
+    expect(spawnMock).toHaveBeenCalledWith(
+      "uv",
+      [
+        "x",
+        "--from",
+        "cisco-ai-skill-scanner",
+        "skill-scanner-api",
+        "--port",
+        "8131",
+      ],
+      expect.objectContaining({ shell: false })
+    );
+  });
+
   it("deduplicates concurrent startup attempts", async () => {
+    vi.useFakeTimers();
     delete process.env.SKILL_SCANNER_API_URL;
     process.env.SKILL_SCANNER_API_PORT = "8125";
 
@@ -176,7 +233,11 @@ describe("ensureScannerApi", () => {
     spawnMock.mockReturnValue(createMockChildProcess());
 
     const { ensureScannerApi } = await import("../src/scanner/lifecycle.js");
-    const [a, b] = await Promise.all([ensureScannerApi(), ensureScannerApi()]);
+    const promiseA = ensureScannerApi();
+    const promiseB = ensureScannerApi();
+
+    await vi.runAllTimersAsync();
+    const [a, b] = await Promise.all([promiseA, promiseB]);
 
     expect(a).toBe("http://localhost:8125");
     expect(b).toBe("http://localhost:8125");
@@ -184,6 +245,7 @@ describe("ensureScannerApi", () => {
   });
 
   it("reuses already-ready managed process when healthy", async () => {
+    vi.useFakeTimers();
     delete process.env.SKILL_SCANNER_API_URL;
     process.env.SKILL_SCANNER_API_PORT = "8126";
 
@@ -199,7 +261,9 @@ describe("ensureScannerApi", () => {
 
     const { ensureScannerApi } = await import("../src/scanner/lifecycle.js");
 
-    const first = await ensureScannerApi();
+    const firstPromise = ensureScannerApi();
+    await vi.runAllTimersAsync();
+    const first = await firstPromise;
     expect(first).toBe("http://localhost:8126");
     const spawnCallsAfterFirst = spawnMock.mock.calls.length;
 
@@ -212,6 +276,7 @@ describe("ensureScannerApi", () => {
   });
 
   it("kills stale managed process when unhealthy and recovers", async () => {
+    vi.useFakeTimers();
     delete process.env.SKILL_SCANNER_API_URL;
     process.env.SKILL_SCANNER_API_PORT = "8127";
 
@@ -227,20 +292,25 @@ describe("ensureScannerApi", () => {
 
     const { ensureScannerApi } = await import("../src/scanner/lifecycle.js");
 
-    await ensureScannerApi();
+    const firstPromise = ensureScannerApi();
+    await vi.runAllTimersAsync();
+    await firstPromise;
 
     fetchMock.mockReset();
     fetchMock
       .mockResolvedValueOnce(healthOkResponse(false))
       .mockResolvedValueOnce(healthOkResponse(true));
 
-    const recovered = await ensureScannerApi();
+    const recoveredPromise = ensureScannerApi();
+    await vi.runAllTimersAsync();
+    const recovered = await recoveredPromise;
 
     expect(recovered).toBe("http://localhost:8127");
     expect(child.kill).toHaveBeenCalled();
   });
 
   it("returns empty string when auto-start throws unexpectedly", async () => {
+    vi.useFakeTimers();
     delete process.env.SKILL_SCANNER_API_URL;
     process.env.SKILL_SCANNER_API_PORT = "8128";
 
@@ -252,12 +322,15 @@ describe("ensureScannerApi", () => {
     });
 
     const { ensureScannerApi } = await import("../src/scanner/lifecycle.js");
-    const url = await ensureScannerApi();
+    const urlPromise = ensureScannerApi();
+    await vi.runAllTimersAsync();
+    const url = await urlPromise;
 
     expect(url).toBe("");
   });
 
   it("executes child stdout/stderr and process event handlers", async () => {
+    vi.useFakeTimers();
     delete process.env.SKILL_SCANNER_API_URL;
     process.env.SKILL_SCANNER_API_PORT = "8129";
 
@@ -274,7 +347,9 @@ describe("ensureScannerApi", () => {
     spawnMock.mockReturnValue(eventful.child);
 
     const { ensureScannerApi } = await import("../src/scanner/lifecycle.js");
-    await ensureScannerApi();
+    const urlPromise = ensureScannerApi();
+    await vi.runAllTimersAsync();
+    await urlPromise;
 
     eventful.streamHandlers["stdout:data"]?.(Buffer.from("ready"));
     eventful.streamHandlers["stderr:data"]?.(Buffer.from("warn"));
@@ -286,6 +361,7 @@ describe("ensureScannerApi", () => {
   });
 
   it("shutdown on process exit falls back to child.kill when taskkill fails", async () => {
+    vi.useFakeTimers();
     delete process.env.SKILL_SCANNER_API_URL;
     process.env.SKILL_SCANNER_API_PORT = "8130";
 
@@ -308,7 +384,9 @@ describe("ensureScannerApi", () => {
     spawnMock.mockReturnValue(child);
 
     const { ensureScannerApi } = await import("../src/scanner/lifecycle.js");
-    await ensureScannerApi();
+    const urlPromise = ensureScannerApi();
+    await vi.runAllTimersAsync();
+    await urlPromise;
 
     process.emit("exit", 0);
 
