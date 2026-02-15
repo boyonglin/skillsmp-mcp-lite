@@ -234,9 +234,7 @@ describe("formatReadSkillResponse", () => {
       content,
       "SKILL.md"
     );
-    // Should contain the frontmatter directly without doubling separators
     expect(output).toContain("---\nname: test");
-    // Should NOT have "---\n\n---" (double separator)
     expect(output).not.toMatch(/---\n\n---\n\n---/);
   });
 
@@ -260,7 +258,6 @@ describe("formatReadSkillResponse", () => {
       totalFindings: 1,
       findings: [
         {
-          // All optional fields missing except description
           description: "Suspicious pattern found",
         },
       ],
@@ -278,9 +275,6 @@ describe("formatReadSkillResponse", () => {
   });
 });
 
-/* ------------------------------------------------------------------ */
-/*  formatSkillsResponse — additional edge cases                       */
-/* ------------------------------------------------------------------ */
 describe("formatSkillsResponse (edge cases)", () => {
   it("shows total from skills.length when pagination is undefined", () => {
     const skills = [
@@ -318,9 +312,6 @@ describe("formatSkillsResponse (edge cases)", () => {
   });
 });
 
-/* ------------------------------------------------------------------ */
-/*  formatAISearchResponse — additional edge cases                     */
-/* ------------------------------------------------------------------ */
 describe("formatAISearchResponse (edge cases)", () => {
   it("handles empty results", () => {
     const output = formatAISearchResponse([], "nope");
