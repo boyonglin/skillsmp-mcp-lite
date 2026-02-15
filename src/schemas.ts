@@ -1,16 +1,10 @@
 import { z } from "zod";
 
-/**
- * Zod Schemas for SkillsMP Tools
- */
-
-// Sort options enum
 enum SortBy {
   STARS = "stars",
   RECENT = "recent",
 }
 
-// Keyword Search Schema
 export const KeywordSearchSchema = z
   .object({
     query: z
@@ -40,7 +34,6 @@ export const KeywordSearchSchema = z
 
 export type KeywordSearchInput = z.infer<typeof KeywordSearchSchema>;
 
-// AI Semantic Search Schema
 export const AISearchSchema = z
   .object({
     query: z
@@ -53,7 +46,6 @@ export const AISearchSchema = z
 
 export type AISearchInput = z.infer<typeof AISearchSchema>;
 
-// Read Skill Schema
 export const ReadSkillSchema = z
   .object({
     repo: z

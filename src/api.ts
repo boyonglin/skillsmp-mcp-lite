@@ -1,12 +1,5 @@
-/**
- * SkillsMP API Client and Types
- */
-
-// API Configuration
 const SKILLSMP_API_BASE = "https://skillsmp.com/api/v1";
 const API_TIMEOUT_MS = 30_000;
-
-// Response Types
 export interface Skill {
   id: string;
   name: string;
@@ -72,7 +65,6 @@ interface ApiError {
   };
 }
 
-// API Client
 export async function makeApiRequest<T>(
   endpoint: string,
   apiKey: string,
@@ -116,9 +108,6 @@ export async function makeApiRequest<T>(
   return response.json() as Promise<T>;
 }
 
-/**
- * Validate base response structure (shared logic)
- */
 function validateBaseResponse(data: unknown): Record<string, unknown> {
   if (!data || typeof data !== "object") {
     throw new ApiStructureError("Invalid response: expected object");
@@ -143,9 +132,6 @@ function validateBaseResponse(data: unknown): Record<string, unknown> {
   return response.data as Record<string, unknown>;
 }
 
-/**
- * Validate search response structure
- */
 export function validateSearchResponse(
   data: unknown
 ): asserts data is SearchResponse {
@@ -160,9 +146,6 @@ export function validateSearchResponse(
   }
 }
 
-/**
- * Validate AI search response structure
- */
 export function validateAISearchResponse(
   data: unknown
 ): asserts data is AISearchResponse {
@@ -177,9 +160,6 @@ export function validateAISearchResponse(
   }
 }
 
-/**
- * Custom error for API structure changes
- */
 class ApiStructureError extends Error {
   constructor(message: string) {
     super(message);
@@ -187,9 +167,6 @@ class ApiStructureError extends Error {
   }
 }
 
-/**
- * Custom error for API requests with HTTP status code
- */
 class ApiRequestError extends Error {
   public readonly statusCode: number;
 
@@ -200,7 +177,6 @@ class ApiRequestError extends Error {
   }
 }
 
-// Error Handler
 export function handleApiError(error: unknown): string {
   if (error instanceof ApiStructureError) {
     return `API Structure Error: ${error.message}\n\nThis likely means the SkillsMP API has changed. Please report this issue.`;

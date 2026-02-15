@@ -7,16 +7,6 @@ import { registerSkillsTools } from "./tools/skills.js";
 const require = createRequire(import.meta.url);
 const { version } = require("../package.json");
 
-/**
- * SkillsMP MCP Server
- *
- * This server provides tools to search for AI skills from SkillsMP marketplace
- * before starting any task. It supports both keyword search and AI semantic search.
- *
- * Environment Variables:
- *   SKILLSMP_API_KEY - Your SkillsMP API key (required)
- */
-
 const API_KEY = process.env.SKILLSMP_API_KEY;
 
 if (!API_KEY) {
@@ -25,16 +15,13 @@ if (!API_KEY) {
   process.exit(1);
 }
 
-// Initialize MCP Server
 const server = new McpServer({
   name: "skillsmp-mcp-server",
   version: version as string,
 });
 
-// Register skills search tools
 registerSkillsTools(server, API_KEY);
 
-// Start server with stdio transport
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
