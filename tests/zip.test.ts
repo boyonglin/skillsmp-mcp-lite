@@ -4,9 +4,7 @@ import { buildZipBuffer } from "../src/zip.js";
 describe("buildZipBuffer", () => {
   it("produces a valid ZIP for an empty map", () => {
     const buf = buildZipBuffer(new Map());
-    // End-of-central-directory signature should be present
     expect(buf.readUInt32LE(buf.length - 22)).toBe(0x06054b50);
-    // Zero entries
     expect(buf.readUInt16LE(buf.length - 22 + 8)).toBe(0);
   });
 
@@ -15,9 +13,7 @@ describe("buildZipBuffer", () => {
     files.set("hello.txt", Buffer.from("Hello, world!"));
     const buf = buildZipBuffer(files);
 
-    // Local file header signature at offset 0
     expect(buf.readUInt32LE(0)).toBe(0x04034b50);
-    // EOCD: 1 entry
     expect(buf.readUInt16LE(buf.length - 22 + 8)).toBe(1);
   });
 
@@ -28,7 +24,6 @@ describe("buildZipBuffer", () => {
     files.set("c.txt", Buffer.from("ccc"));
     const buf = buildZipBuffer(files);
 
-    // EOCD: 3 entries
     expect(buf.readUInt16LE(buf.length - 22 + 8)).toBe(3);
   });
 
@@ -38,7 +33,6 @@ describe("buildZipBuffer", () => {
     files.set("test.txt", Buffer.from(content));
     const buf = buildZipBuffer(files);
 
-    // The raw content should appear verbatim in the buffer
     expect(buf.includes(Buffer.from(content))).toBe(true);
   });
 });

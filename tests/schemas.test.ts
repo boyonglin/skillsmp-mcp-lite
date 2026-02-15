@@ -5,9 +5,6 @@ import {
   ReadSkillSchema,
 } from "../src/schemas.js";
 
-/* ------------------------------------------------------------------ */
-/*  KeywordSearchSchema                                                */
-/* ------------------------------------------------------------------ */
 describe("KeywordSearchSchema", () => {
   it("accepts minimal valid input and applies defaults", () => {
     const result = KeywordSearchSchema.parse({ query: "hello" });
@@ -62,9 +59,6 @@ describe("KeywordSearchSchema", () => {
   });
 });
 
-/* ------------------------------------------------------------------ */
-/*  AISearchSchema                                                     */
-/* ------------------------------------------------------------------ */
 describe("AISearchSchema", () => {
   it("accepts valid input", () => {
     const result = AISearchSchema.parse({ query: "build a dashboard" });
@@ -84,9 +78,6 @@ describe("AISearchSchema", () => {
   });
 });
 
-/* ------------------------------------------------------------------ */
-/*  ReadSkillSchema                                                    */
-/* ------------------------------------------------------------------ */
 describe("ReadSkillSchema", () => {
   it("accepts valid input and defaults enableScan to true", () => {
     const result = ReadSkillSchema.parse({

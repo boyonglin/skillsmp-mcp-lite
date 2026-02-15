@@ -1,13 +1,66 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
+  makeApiRequest,
   handleApiError,
   validateSearchResponse,
   validateAISearchResponse,
 } from "../src/api.js";
 
-/* ------------------------------------------------------------------ */
-/*  validateSearchResponse                                             */
-/* ------------------------------------------------------------------ */
+describe("makeApiRequest", () => {
+  it("builds URL with query params and returns parsed json", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const data = await makeApiRequest<{ success: boolean }>(
+      "skills/search",
+      "api-key",
+      { q: "pdf", page: 2 }
+    );
+
+    expect(data.success).toBe(true);
+    const [url, options] = fetchMock.mock.calls[0]!;
+    expect(String(url)).toContain("skills/search");
+    expect(String(url)).toContain("q=pdf");
+    expect(String(url)).toContain("page=2");
+    expect(options.headers.Authorization).toBe("Bearer api-key");
+  });
+
+  it("throws ApiRequestError with API message when non-ok", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        json: async () => ({ error: { message: "bad key" } }),
+      })
+    );
+
+    await expect(makeApiRequest("skills/search", "bad")).rejects.toThrow(
+      "bad key"
+    );
+  });
+
+  it("throws status fallback when error body is missing", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        json: async () => {
+          throw new Error("invalid json");
+        },
+      })
+    );
+
+    await expect(makeApiRequest("skills/search", "x")).rejects.toThrow(
+      "API request failed with status 500"
+    );
+  });
+});
+
 describe("validateSearchResponse", () => {
   it("accepts a valid search response", () => {
     const data = {
@@ -52,9 +105,6 @@ describe("validateSearchResponse", () => {
   });
 });
 
-/* ------------------------------------------------------------------ */
-/*  validateAISearchResponse                                           */
-/* ------------------------------------------------------------------ */
 describe("validateAISearchResponse", () => {
   it("accepts a valid AI search response", () => {
     const data = {
@@ -77,9 +127,6 @@ describe("validateAISearchResponse", () => {
   });
 });
 
-/* ------------------------------------------------------------------ */
-/*  handleApiError                                                     */
-/* ------------------------------------------------------------------ */
 describe("handleApiError", () => {
   it("formats ApiStructureError via validateSearchResponse", () => {
     let caught: unknown;
@@ -93,11 +140,70 @@ describe("handleApiError", () => {
     expect(msg).toContain("Please report this issue");
   });
 
-  it("formats 401 ApiRequestError", () => {
-    // Simulate by calling makeApiRequest would throw; instead we test via
-    // the same class path using validateSearchResponse to trigger the branch.
-    // For 401/429 we need an ApiRequestError, which is private. We indirectly
-    // test by passing a plain Error to verify the generic Error branch.
+  it("formats 401 ApiRequestError", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        json: async () => ({ error: { message: "unauthorized" } }),
+      })
+    );
+
+    let caught: unknown;
+    try {
+      await makeApiRequest("skills/search", "bad");
+    } catch (error) {
+      caught = error;
+    }
+
+    const msg = handleApiError(caught);
+    expect(msg).toContain("Invalid or missing API key");
+  });
+
+  it("formats 429 ApiRequestError", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 429,
+        json: async () => ({ error: { message: "too many requests" } }),
+      })
+    );
+
+    let caught: unknown;
+    try {
+      await makeApiRequest("skills/search", "bad");
+    } catch (error) {
+      caught = error;
+    }
+
+    const msg = handleApiError(caught);
+    expect(msg).toContain("Rate limit exceeded");
+  });
+
+  it("formats generic ApiRequestError status", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        json: async () => ({ error: { message: "server fail" } }),
+      })
+    );
+
+    let caught: unknown;
+    try {
+      await makeApiRequest("skills/search", "bad");
+    } catch (error) {
+      caught = error;
+    }
+
+    const msg = handleApiError(caught);
+    expect(msg).toContain("HTTP 500");
+  });
+
+  it("formats generic Error", () => {
     const msg = handleApiError(new Error("connection refused"));
     expect(msg).toBe("Error: connection refused");
   });

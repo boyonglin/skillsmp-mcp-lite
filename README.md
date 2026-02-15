@@ -13,7 +13,7 @@ A lightweight MCP server that enables AI assistants to search and read skills fr
 
 | Requirement | Purpose | Required |
 |---|---|---|
-| Node.js ≥ 18 | Runtime | Yes |
+| Node.js ≥ 20 | Runtime | Yes |
 | [SkillsMP API Key](https://skillsmp.com/docs/api) | Authentication | Yes |
 | [uv](https://docs.astral.sh/uv/getting-started/installation/) (provides `uvx`) | Security scanning | No |
 
@@ -117,7 +117,7 @@ When `skillsmp_read_skill` is called with `enableScan: true` (the default), the 
 
 1. Fetches skill files from GitHub via REST API
 2. Applies **three-layer scan limits** using GitHub tree `size` (before downloading):
-   - **Max files**: 200 files per scan
+   - **Max files**: 100 files per scan
    - **Max single file size**: 500 KB per file
    - **Max total size**: 5 MB across all files
 3. Builds an in-memory ZIP archive from accepted files
