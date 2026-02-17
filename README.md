@@ -21,55 +21,29 @@ A lightweight MCP server that enables AI assistants to search and read skills fr
 
 ## Quick Setup
 
-All clients run the same command — only the config file location and JSON key differ.
+### Auto-Configuration
 
-**Server definition** (shared across all clients):
-
-```json
-"skillsmp": {
-  "command": "npx",
-  "args": ["-y", "skillsmp-mcp-lite"],
-  "env": {
-    "SKILLSMP_API_KEY": "YOUR_API_KEY"
-  }
-}
-```
-
-### VS Code / GitHub Copilot
-
-Open `Ctrl+Shift+P` → *MCP: Open User Configuration*, then add:
-
-```json
-{
-  "servers": {
-    "skillsmp": { "type": "stdio", "command": "npx", "args": ["-y", "skillsmp-mcp-lite"], "env": { "SKILLSMP_API_KEY": "YOUR_API_KEY" } }
-  }
-}
-```
-
-> VS Code requires the extra `"type": "stdio"` field.
-
-### Cursor / Claude Desktop
-
-| Client | Config file |
-|---|---|
-| Cursor | `~/.cursor/mcp.json` |
-| Claude Desktop (macOS) | `~/Library/Application Support/Claude/claude_desktop_config.json` |
-| Claude Desktop (Windows) | `%APPDATA%\Claude\claude_desktop_config.json` |
-
-```json
-{
-  "mcpServers": {
-    "skillsmp": { "command": "npx", "args": ["-y", "skillsmp-mcp-lite"], "env": { "SKILLSMP_API_KEY": "YOUR_API_KEY" } }
-  }
-}
-```
-
-### Claude Code
+Run a single command to automatically detect your MCP client and write the config:
 
 ```bash
-claude mcp add skillsmp -- npx -y skillsmp-mcp-lite --env SKILLSMP_API_KEY=YOUR_API_KEY
+npx -y skillsmp-mcp-lite --setup
 ```
+
+This detects which clients are installed (VS Code, Cursor, Claude Desktop, Claude Code) and adds the `skillsmp` server entry to each config file. For VS Code it also adds a secure input prompt for your API key.
+
+To configure only a specific client, set the `SKILLSMP_MCP_CLIENT` environment variable:
+
+```bash
+# Windows (PowerShell)
+$env:SKILLSMP_MCP_CLIENT="cursor"; npx -y skillsmp-mcp-lite --setup
+
+# macOS / Linux
+SKILLSMP_MCP_CLIENT=cursor npx -y skillsmp-mcp-lite --setup
+```
+
+Supported values: `vscode`, `cursor`, `claude-desktop`, `claude-code`, `all`.
+
+> If a client already has a `skillsmp` entry, it is skipped — running `--setup` multiple times is safe.
 
 ## Environment Variables
 
@@ -79,6 +53,7 @@ claude mcp add skillsmp -- npx -y skillsmp-mcp-lite --env SKILLSMP_API_KEY=YOUR_
 | `GITHUB_TOKEN` | — | Optional. Raises GitHub API rate limit from 60 → 5,000 req/hour |
 | `SKILL_SCANNER_API_URL` | — | Optional. URL of an external Skill Scanner API server |
 | `SKILL_SCANNER_API_PORT` | `8000` | Optional. Port for the auto-managed scanner server |
+| `SKILLSMP_MCP_CLIENT` | — | Optional. Force `--setup` to configure a specific client (`vscode`, `cursor`, `claude-desktop`, `claude-code`, `all`) |
 
 ## Available Tools
 
