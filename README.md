@@ -45,6 +45,58 @@ Supported values: `vscode`, `cursor`, `claude-desktop`, `claude-code`, `all`.
 
 > If a client already has a `skillsmp` entry, it is skipped — running `--setup` multiple times is safe.
 
+### Manual Configuration
+
+All clients run the same command — only the config file location and JSON key differ.
+
+**Server definition** (shared across all clients):
+
+```json
+"skillsmp": {
+  "command": "npx",
+  "args": ["-y", "skillsmp-mcp-lite"],
+  "env": {
+    "SKILLSMP_API_KEY": "YOUR_API_KEY"
+  }
+}
+```
+
+#### VS Code / GitHub Copilot
+
+Open `Ctrl+Shift+P` → *MCP: Open User Configuration*, then add:
+
+```json
+{
+  "servers": {
+    "skillsmp": { "type": "stdio", "command": "npx", "args": ["-y", "skillsmp-mcp-lite"], "env": { "SKILLSMP_API_KEY": "YOUR_API_KEY" } }
+  }
+}
+```
+
+> VS Code requires the extra `"type": "stdio"` field.
+
+#### Cursor / Claude Desktop
+
+| Client | Config file |
+|---|---|
+| Cursor | `~/.cursor/mcp.json` |
+| Claude Desktop (macOS) | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| Claude Desktop (Windows) | `%APPDATA%\Claude\claude_desktop_config.json` |
+
+```json
+{
+  "mcpServers": {
+    "skillsmp": { "command": "npx", "args": ["-y", "skillsmp-mcp-lite"], "env": { "SKILLSMP_API_KEY": "YOUR_API_KEY" } }
+  }
+}
+```
+
+#### Claude Code
+
+```bash
+claude mcp add skillsmp -- npx -y skillsmp-mcp-lite --env SKILLSMP_API_KEY=YOUR_API_KEY
+```
+
 ## Environment Variables
 
 | Variable | Default | Description |

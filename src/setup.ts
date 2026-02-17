@@ -190,8 +190,12 @@ export function setup(): void {
       console.error(
         `SkillsMP MCP: detected ${targetsToConfigure[0]?.name || currentClient}, configuring only that client...`
       );
+    } else if (currentClient === "all") {
+      console.error("SkillsMP MCP: auto-configuring all supported clients...");
     } else {
-      console.error("SkillsMP MCP: auto-configuring detected clients...");
+      console.error(
+        "SkillsMP MCP: no specific client detected, attempting to configure all supported clients..."
+      );
     }
 
     for (const target of targetsToConfigure) {
