@@ -1,6 +1,7 @@
 import { spawn, spawnSync, type ChildProcess } from "child_process";
+import { delimiter } from "path";
 import { getErrorMessage } from "../utils.js";
-import { resolveScannerLauncher } from "./uv-resolver.js";
+import { resolveScannerLauncher, resolvedLauncherDir } from "./uv-resolver.js";
 
 const API_HEALTH_POLL_MS = 500;
 const API_STARTUP_TIMEOUT_MS = 30_000;
@@ -44,7 +45,6 @@ async function waitForApiReady(
 }
 
 export async function ensureScannerApi(): Promise<string> {
-  // 1. User-configured external URL
   if (SKILL_SCANNER_API_URL) {
     if (await isApiHealthy(SKILL_SCANNER_API_URL)) return SKILL_SCANNER_API_URL;
     console.error(
@@ -53,7 +53,6 @@ export async function ensureScannerApi(): Promise<string> {
     return "";
   }
 
-  // 2. Already running managed server
   if (
     managedApiReady &&
     managedApiProcess &&
@@ -66,19 +65,16 @@ export async function ensureScannerApi(): Promise<string> {
     managedApiProcess = null;
   }
 
-  // 3. Deduplicate concurrent startup attempts
   if (managedApiStarting) {
     const ok = await managedApiStarting;
     return ok && managedApiReady ? MANAGED_API_URL : "";
   }
 
-  // 4. Check if something is already listening on the port
   if (await isApiHealthy(MANAGED_API_URL)) {
     managedApiReady = true;
     return MANAGED_API_URL;
   }
 
-  // 5. Auto-start via uvx
   managedApiStarting = (async () => {
     try {
       console.error("Auto-starting Skill Scanner API server via uvx...");
@@ -93,6 +89,14 @@ export async function ensureScannerApi(): Promise<string> {
         return false;
       }
 
+      const launcherDir = resolvedLauncherDir(launcher);
+      const augmentedEnv = launcherDir
+        ? {
+            ...process.env,
+            PATH: `${launcherDir}${delimiter}${process.env.PATH || ""}`,
+          }
+        : process.env;
+
       const child = spawn(
         launcher.command,
         [
@@ -106,6 +110,7 @@ export async function ensureScannerApi(): Promise<string> {
         {
           stdio: ["ignore", "pipe", "pipe"],
           shell: false,
+          env: augmentedEnv,
         }
       );
 
