@@ -1,6 +1,6 @@
 {
   "name": "skillsmp-mcp-lite",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "description": "Lightweight MCP server for searching AI skills from SkillsMP before starting any task",
   "type": "module",
   "main": "dist/index.js",
@@ -15,9 +15,6 @@
     "start": "node dist/index.js",
     "dev": "tsc --watch",
     "scanner-api": "uvx --from cisco-ai-skill-scanner skill-scanner-api --port 8000",
-    "test": "vitest run",
-    "test:coverage": "vitest run --coverage",
-    "test:watch": "vitest",
     "lint": "eslint \"src/**/*.ts\"",
     "lint:fix": "eslint \"src/**/*.ts\" --fix",
     "format": "prettier --write \"src/**/*.ts\"",
@@ -61,14 +58,12 @@
     "@types/node": "^22.0.0",
     "@typescript-eslint/eslint-plugin": "^8.54.0",
     "@typescript-eslint/parser": "^8.54.0",
-    "@vitest/coverage-v8": "^4.0.18",
     "eslint": "^9.39.2",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.3.0",
     "husky": "^9.1.7",
     "lint-staged": "^16.2.7",
     "prettier": "^3.8.1",
-    "typescript": "^5.7.0",
-    "vitest": "^4.0.18"
+    "typescript": "^5.7.0"
   }
 }

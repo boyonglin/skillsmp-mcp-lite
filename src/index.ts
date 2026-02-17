@@ -3,6 +3,13 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createRequire } from "module";
 import { registerSkillsTools } from "./tools/skills.js";
+import { setup } from "./setup.js";
+
+// Handle --setup flag: configure detected MCP clients and exit
+if (process.argv.includes("--setup")) {
+  setup();
+  process.exit(0);
+}
 
 const require = createRequire(import.meta.url);
 const { version } = require("../package.json");

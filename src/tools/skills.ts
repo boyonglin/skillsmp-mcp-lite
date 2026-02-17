@@ -27,6 +27,10 @@ import {
 } from "../formatters.js";
 import { getErrorMessage } from "../utils.js";
 
+function textResult(text: string) {
+  return { content: [{ type: "text" as const, text }] };
+}
+
 /** Three-layer scan limits — applied BEFORE downloading files via GitHub tree size */
 const SCAN_LIMITS = {
   /** Maximum number of files to include in a scan */
@@ -36,6 +40,92 @@ const SCAN_LIMITS = {
   /** Maximum total size of all files in bytes (5 MB) */
   MAX_TOTAL_BYTES: 5 * 1024 * 1024,
 } as const;
+
+async function fetchAndScanSkillFiles(
+  repo: string,
+  skillPath: string,
+  treeItems: Array<{ path: string; type: string; size?: number }>
+): Promise<{ scanResult: ScanResult; scanNote?: string }> {
+  const skillDirPrefix = skillPath.includes("/")
+    ? skillPath.substring(0, skillPath.lastIndexOf("/") + 1)
+    : "";
+
+  const skillDirItems = treeItems
+    .filter(
+      (item) => item.type === "blob" && item.path.startsWith(skillDirPrefix)
+    )
+    .sort((a, b) => {
+      const aIsSkill =
+        a.path.endsWith("/SKILL.md") || a.path === "SKILL.md" ? 0 : 1;
+      const bIsSkill =
+        b.path.endsWith("/SKILL.md") || b.path === "SKILL.md" ? 0 : 1;
+      if (aIsSkill !== bIsSkill) return aIsSkill - bIsSkill;
+      return (a.size ?? 0) - (b.size ?? 0);
+    });
+
+  let scanNote: string | undefined;
+  let excludedCount = 0;
+  let excludedBytes = 0;
+  let acceptedBytes = 0;
+  const acceptedPaths: string[] = [];
+
+  for (const item of skillDirItems) {
+    const fileSize = item.size ?? 0;
+
+    if (fileSize > SCAN_LIMITS.MAX_SINGLE_FILE_BYTES) {
+      excludedCount++;
+      excludedBytes += fileSize;
+      continue;
+    }
+
+    if (acceptedBytes + fileSize > SCAN_LIMITS.MAX_TOTAL_BYTES) {
+      excludedCount++;
+      excludedBytes += fileSize;
+      continue;
+    }
+
+    if (acceptedPaths.length >= SCAN_LIMITS.MAX_FILES) {
+      excludedCount++;
+      excludedBytes += fileSize;
+      continue;
+    }
+
+    acceptedPaths.push(item.path);
+    acceptedBytes += fileSize;
+  }
+
+  if (excludedCount > 0) {
+    const excludedKB = (excludedBytes / 1024).toFixed(1);
+    scanNote =
+      `⚠️ Scan scope was limited: ${excludedCount} file(s) excluded ` +
+      `(${excludedKB} KB) due to scan limits ` +
+      `(max ${SCAN_LIMITS.MAX_FILES} files, ` +
+      `max ${(SCAN_LIMITS.MAX_SINGLE_FILE_BYTES / 1024).toFixed(0)} KB/file, ` +
+      `max ${(SCAN_LIMITS.MAX_TOTAL_BYTES / 1024 / 1024).toFixed(0)} MB total).`;
+  }
+
+  const fileBuffers = await fetchGitHubFiles(repo, acceptedPaths);
+
+  const relativeFiles = new Map<string, Buffer>();
+  for (const [fullPath, buf] of fileBuffers) {
+    const relativePath = skillDirPrefix
+      ? fullPath.slice(skillDirPrefix.length)
+      : fullPath;
+    relativeFiles.set(relativePath, buf);
+  }
+
+  const skillMdKey = skillDirPrefix
+    ? skillPath.slice(skillDirPrefix.length)
+    : skillPath;
+  if (relativeFiles.size === 0 || !relativeFiles.has(skillMdKey)) {
+    throw new Error(
+      `No valid skill files were fetched for scanning (missing ${skillMdKey}).`
+    );
+  }
+
+  const scanResult = await runSkillScanner(relativeFiles);
+  return { scanResult, scanNote };
+}
 
 /**
  * Register SkillsMP tools on the MCP server
@@ -94,30 +184,16 @@ Examples:
         const pagination = rawData.data?.pagination;
 
         if (!skills.length) {
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: `No skills found matching '${params.query}'. Try different keywords or use AI semantic search for natural language queries.`,
-              },
-            ],
-          };
+          return textResult(
+            `No skills found matching '${params.query}'. Try different keywords or use AI semantic search for natural language queries.`
+          );
         }
 
-        const output = formatSkillsResponse(skills, params.query, pagination);
-
-        return {
-          content: [{ type: "text" as const, text: output }],
-        };
+        return textResult(
+          formatSkillsResponse(skills, params.query, pagination)
+        );
       } catch (error) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: handleApiError(error),
-            },
-          ],
-        };
+        return textResult(handleApiError(error));
       }
     }
   );
@@ -170,30 +246,14 @@ Examples:
           }));
 
         if (!skills.length) {
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: `No skills found for: "${params.query}". Try rephrasing your query or use keyword search for specific terms.`,
-              },
-            ],
-          };
+          return textResult(
+            `No skills found for: "${params.query}". Try rephrasing your query or use keyword search for specific terms.`
+          );
         }
 
-        const output = formatAISearchResponse(skills, params.query);
-
-        return {
-          content: [{ type: "text" as const, text: output }],
-        };
+        return textResult(formatAISearchResponse(skills, params.query));
       } catch (error) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: handleApiError(error),
-            },
-          ],
-        };
+        return textResult(handleApiError(error));
       }
     }
   );
@@ -235,14 +295,9 @@ Examples:
           params.repo
         );
         if (!treeItems.length) {
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: `❌ **Repository Fetch Failed**\n\nRepository: ${params.repo}\n\nError:\n${treeError || "Empty or inaccessible repository"}\n\n💡 **Tip**: Ensure the repository is public or configure a GITHUB_TOKEN.`,
-              },
-            ],
-          };
+          return textResult(
+            `❌ **Repository Fetch Failed**\n\nRepository: ${params.repo}\n\nError:\n${treeError || "Empty or inaccessible repository"}\n\n💡 **Tip**: Ensure the repository is public or configure a GITHUB_TOKEN.`
+          );
         }
         if (treeError) {
           console.error(`[ReadSkill] ${treeError}`);
@@ -262,126 +317,34 @@ Examples:
         }
 
         if (!skillPath && skillFiles.length > 1) {
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: `❌ **Skill Not Found**: Could not find SKILL.md matching "${params.skillName}".\n\n**Available SKILL.md files in this repo:**\n${skillFiles.map((f) => `- ${f}`).join("\n")}\n\n💡 **Tip**: Use a more specific skillName that matches part of the path.`,
-              },
-            ],
-          };
+          return textResult(
+            `❌ **Skill Not Found**: Could not find SKILL.md matching "${params.skillName}".\n\n**Available SKILL.md files in this repo:**\n${skillFiles.map((f) => `- ${f}`).join("\n")}\n\n💡 **Tip**: Use a more specific skillName that matches part of the path.`
+          );
         }
 
         if (!skillPath) {
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: `❌ **Skill Not Found**: No SKILL.md found matching "${params.skillName}" in ${params.repo}.`,
-              },
-            ],
-          };
+          return textResult(
+            `❌ **Skill Not Found**: No SKILL.md found matching "${params.skillName}" in ${params.repo}.`
+          );
         }
 
         const { content: skillContent, error: readError } =
           await fetchGitHubFileContent(params.repo, skillPath);
         if (readError || !skillContent) {
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: `❌ **Read Failed**\n\nPath: ${skillPath}\nError:\n${readError || "Empty file"}`,
-              },
-            ],
-          };
+          return textResult(
+            `❌ **Read Failed**\n\nPath: ${skillPath}\nError:\n${readError || "Empty file"}`
+          );
         }
 
         let scanResult: ScanResult | undefined;
         let scanNote: string | undefined;
         if (enableScan) {
           try {
-            const skillDirPrefix = skillPath.includes("/")
-              ? skillPath.substring(0, skillPath.lastIndexOf("/") + 1)
-              : "";
-
-            const skillDirItems = treeItems
-              .filter(
-                (item) =>
-                  item.type === "blob" && item.path.startsWith(skillDirPrefix)
-              )
-              .sort((a, b) => {
-                const aIsSkill =
-                  a.path.endsWith("/SKILL.md") || a.path === "SKILL.md" ? 0 : 1;
-                const bIsSkill =
-                  b.path.endsWith("/SKILL.md") || b.path === "SKILL.md" ? 0 : 1;
-                if (aIsSkill !== bIsSkill) return aIsSkill - bIsSkill;
-                return (a.size ?? 0) - (b.size ?? 0);
-              });
-
-            // Apply three-layer scan limits using GitHub tree size
-            let excludedCount = 0;
-            let excludedBytes = 0;
-            let acceptedBytes = 0;
-            const acceptedPaths: string[] = [];
-
-            for (const item of skillDirItems) {
-              const fileSize = item.size ?? 0;
-
-              if (fileSize > SCAN_LIMITS.MAX_SINGLE_FILE_BYTES) {
-                excludedCount++;
-                excludedBytes += fileSize;
-                continue;
-              }
-
-              if (acceptedBytes + fileSize > SCAN_LIMITS.MAX_TOTAL_BYTES) {
-                excludedCount++;
-                excludedBytes += fileSize;
-                continue;
-              }
-
-              if (acceptedPaths.length >= SCAN_LIMITS.MAX_FILES) {
-                excludedCount++;
-                excludedBytes += fileSize;
-                continue;
-              }
-
-              acceptedPaths.push(item.path);
-              acceptedBytes += fileSize;
-            }
-
-            if (excludedCount > 0) {
-              const excludedKB = (excludedBytes / 1024).toFixed(1);
-              scanNote =
-                `⚠️ Scan scope was limited: ${excludedCount} file(s) excluded ` +
-                `(${excludedKB} KB) due to scan limits ` +
-                `(max ${SCAN_LIMITS.MAX_FILES} files, ` +
-                `max ${(SCAN_LIMITS.MAX_SINGLE_FILE_BYTES / 1024).toFixed(0)} KB/file, ` +
-                `max ${(SCAN_LIMITS.MAX_TOTAL_BYTES / 1024 / 1024).toFixed(0)} MB total).`;
-            }
-
-            const fileBuffers = await fetchGitHubFiles(
+            ({ scanResult, scanNote } = await fetchAndScanSkillFiles(
               params.repo,
-              acceptedPaths
-            );
-
-            const relativeFiles = new Map<string, Buffer>();
-            for (const [fullPath, buf] of fileBuffers) {
-              const relativePath = skillDirPrefix
-                ? fullPath.slice(skillDirPrefix.length)
-                : fullPath;
-              relativeFiles.set(relativePath, buf);
-            }
-
-            const skillMdKey = skillDirPrefix
-              ? skillPath.slice(skillDirPrefix.length)
-              : skillPath;
-            if (relativeFiles.size === 0 || !relativeFiles.has(skillMdKey)) {
-              throw new Error(
-                `No valid skill files were fetched for scanning (missing ${skillMdKey}).`
-              );
-            }
-
-            scanResult = await runSkillScanner(relativeFiles);
+              skillPath,
+              treeItems
+            ));
           } catch (scanError) {
             scanResult = {
               available: true,
@@ -391,28 +354,19 @@ Examples:
           }
         }
 
-        const output = formatReadSkillResponse(
-          params.repo,
-          params.skillName,
-          skillContent,
-          skillPath,
-          scanResult,
-          enableScan,
-          scanNote
+        return textResult(
+          formatReadSkillResponse(
+            params.repo,
+            params.skillName,
+            skillContent,
+            skillPath,
+            scanResult,
+            enableScan,
+            scanNote
+          )
         );
-
-        return {
-          content: [{ type: "text" as const, text: output }],
-        };
       } catch (error) {
-        return {
-          content: [
-            {
-              type: "text" as const,
-              text: `❌ **Error**: ${error instanceof Error ? error.message : "An unexpected error occurred"}`,
-            },
-          ],
-        };
+        return textResult(`❌ **Error**: ${getErrorMessage(error)}`);
       }
     }
   );
