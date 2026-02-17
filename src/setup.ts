@@ -79,7 +79,7 @@ function configureClient(target: ClientTarget): void {
   } else {
     const configDir = dirname(target.path);
     if (!existsSync(configDir)) {
-      return;
+      mkdirSync(configDir, { recursive: true });
     }
   }
 
@@ -179,10 +179,6 @@ function detectCurrentClient(): ClientTarget["id"] | "all" | null {
 
 export function setup(): void {
   try {
-    if (existsSync(join(process.cwd(), "vitest.config.ts"))) {
-      return;
-    }
-
     const targets = getClientTargets();
     const currentClient = detectCurrentClient();
 
